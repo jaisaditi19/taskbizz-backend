@@ -13,5 +13,5 @@ function getOrgDbUrl(dbName) {
     if (!user || !pass || !host) {
         throw new Error("Database credentials (DB_USER, DB_PASS, DB_HOST) are not set");
     }
-    return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host}:${port}/${dbName}?schema=public&connect_timeout=15`;
+    return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host}:${port}/${dbName}?pgbouncer=true&schema=public&connect_timeout=15`;
 }

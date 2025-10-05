@@ -18,5 +18,5 @@ export function getOrgDbUrl(dbName: string): string {
 
   return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(
     pass
-  )}@${host}:${port}/${dbName}?schema=public&connect_timeout=15`;
+  )}@${host}:${port}/${dbName}?pgbouncer=true&schema=public&connect_timeout=15`;
 }
