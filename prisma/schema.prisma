@@ -1,0 +1,200 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  ADMIN
+  MANAGER
+  EMPLOYEE
+}
+
+enum UserStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  INVITED
+  SUSPENDED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  INACTIVE
+}
+
+enum PaymentStatus {
+  SUCCESS
+  FAILED
+  PENDING
+}
+
+enum BillingPeriod {
+  QUARTERLY
+  YEARLY
+}
+
+enum PaymentPurpose {
+  NEW_SUBSCRIPTION
+  RENEWAL
+  SEAT_TOPUP
+  UPGRADE
+  DOWNGRADE
+  PRORATION_ADJUSTMENT
+  CONVERT_TRIAL
+}
+
+model User {
+  id                  String         @id @default(uuid())
+  name                String
+  email               String         @unique
+  password            String
+  phone               String?
+  otp                 String?
+  otpExpires          DateTime?
+  otpSentAt           DateTime?
+  role                Role           @default(ADMIN)
+  status              UserStatus     @default(PENDING_VERIFICATION)
+  isVerified          Boolean        @default(false)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  orgId               String?
+  organization        Organization?  @relation(fields: [orgId], references: [id])
+  payments            Payment[]
+  address             String?
+  city                String?
+  state               String?
+  pincode             String?
+  clientCommunication Boolean?
+  refreshTokens       RefreshToken[]
+  panNumber           String?
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+}
+
+model Plan {
+  id            String         @id @default(uuid())
+  name          String         @unique
+  description   String?
+  badge         String?
+  highlighted   Boolean        @default(false)
+  minUsers      Int?
+  features      Json // e.g., ["Task Management", "Client Management"]
+  prices        PlanPrice[]
+  subscriptions Subscription[]
+}
+
+model PlanPrice {
+  id            String        @id @default(uuid())
+  planId        String
+  plan          Plan          @relation(fields: [planId], references: [id])
+  period        BillingPeriod
+  price         Int // price per user/month
+  originalPrice Int
+  priceLabel    String
+
+  @@unique([planId, period], name: "planId_period")
+  @@index([planId])
+}
+
+model Organization {
+  id            String         @id @default(uuid())
+  name          String
+  dbName        String         @unique
+  logoUrl       String?
+  industry      String?
+  ownerId       String?
+  subscriptions Subscription[]
+  users         User[]
+}
+
+model Subscription {
+  id     String       @id @default(uuid())
+  orgId  String
+  org    Organization @relation(fields: [orgId], references: [id])
+  planId String?
+  plan   Plan?        @relation(fields: [planId], references: [id], onDelete: Restrict)
+
+  status       SubscriptionStatus @default(ACTIVE)
+  startDate    DateTime
+  endDate      DateTime
+  payments     Payment[]
+  userCount    Int?
+  billingCycle String?
+
+  isTrial           Boolean   @default(false)
+  graceUntil        DateTime?
+  cancelAtPeriodEnd Boolean   @default(false)
+
+  @@index([orgId])
+  @@index([planId])
+}
+
+model Payment {
+  id                String        @id @default(cuid())
+  subscriptionId    String?
+  subscription      Subscription? @relation(fields: [subscriptionId], references: [id])
+  userId            String?
+  user              User?         @relation(fields: [userId], references: [id])
+  razorpayOrderId   String
+  razorpayPaymentId String
+  amount            Int
+  currency          String
+  status            PaymentStatus @default(SUCCESS)
+  date              DateTime      @default(now())
+
+  purpose PaymentPurpose?
+  meta    Json?
+
+  @@index([subscriptionId])
+  @@index([userId])
+  @@index([razorpayOrderId])
+  @@index([razorpayPaymentId])
+}
+
+model ScheduledPlanChange {
+  id             String    @id @default(cuid())
+  orgId          String
+  subscriptionId String
+  newPlanId      String
+  effectiveAt    DateTime
+  appliedAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([orgId, effectiveAt])
+  @@index([subscriptionId, effectiveAt])
+}
+
+model PromoCode {
+  id                String    @id @default(cuid())
+  code              String    @unique
+  description       String?
+  // Discount: either percent (0-100) or fixed amount currency
+  discountType      String // "PERCENT" | "FIXED"
+  discountValue     Float // percent (e.g. 20) or fixed (e.g. 1000 rupees)
+  appliesTo         String // "SEAT" | "TOTAL" (we'll use SEAT for per-seat discount)
+  active            Boolean   @default(true)
+  maxUses           Int? // null = unlimited
+  usedCount         Int       @default(0)
+  onePerOrg         Boolean   @default(false) // only allow one use per org
+  minSeats          Int? // minimum seats for promo to apply
+  applicablePlanIds String? // JSON string or comma-separated plan ids; null = any
+  startsAt          DateTime?
+  endsAt            DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}

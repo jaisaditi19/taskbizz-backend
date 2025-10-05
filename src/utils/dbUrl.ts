@@ -1,0 +1,22 @@
+// src/utils/dbUrl.ts
+
+export function getOrgDbUrl(dbName: string): string {
+  if (!dbName) {
+    throw new Error("dbName is required to build org DB URL");
+  }
+
+  const user = process.env.DB_USER;
+  const pass = process.env.DB_PASS;
+  const host = process.env.DB_HOST;
+  const port = process.env.DB_PORT || "5432";
+
+  if (!user || !pass || !host) {
+    throw new Error(
+      "Database credentials (DB_USER, DB_PASS, DB_HOST) are not set"
+    );
+  }
+
+  return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(
+    pass
+  )}@${host}:${port}/${dbName}?schema=public&connect_timeout=15`;
+}

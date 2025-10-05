@@ -1,0 +1,574 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/org-client"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL") // overridden at migrate time
+  directUrl = env("DIRECT_URL")
+}
+
+model Client {
+  id                  String   @id @default(cuid())
+  name                String   // CLIENT NAME (REQUIRED)
+  mobile              String?  // MOBILE (OPTIONAL)
+  email               String?  // EMAIL (OPTIONAL)
+  gstNumber           String?  // GST NUMBER (OPTIONAL)
+  panNumber           String?
+  address             String?  // ADDRESS (OPTIONAL)
+  city                String?
+  state               String?
+  pincode             String?
+  clientCommunication Boolean? // CLIENT COMMUNICATION (YES or NO) (OPTIONAL)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  status ClientStatus @default(ACTIVE)
+}
+
+enum ClientStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model Project {
+  id       String   @id @default(uuid())
+  name     String
+  head     String?  // userId from core DB (optional)
+  taskId   String?  // optional task reference if needed
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tasks     Task[]   @relation("ProjectTasks")
+}
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  ON_TRACK
+  DELAYED
+  IN_TESTING
+  ON_HOLD
+  APPROVED
+  CANCELLED
+  PLANNING
+  COMPLETED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+/*
+ Master task model (template for recurring tasks)
+*/
+model Task {
+  id                 String      @id @default(uuid())
+  taskId             Int         @default(autoincrement())
+  clientId           String?
+  projectId          String?
+  title              String
+  description        String?
+  startDate          DateTime
+  dueDate            DateTime
+  assignedToId       String?
+  priority           Priority    @default(MEDIUM)
+  remarks            String?
+  status             TaskStatus  @default(OPEN)
+
+  recurrenceRule     String?
+  recurrenceEndDate  DateTime?
+  isRecurring        Boolean     @default(false)
+  lastGeneratedUntil DateTime?
+  retainSubtasks     Boolean     @default(false)
+  createdById        String?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  assignees          TaskAssignee[]
+  occurrences        TaskOccurrence[]
+  reminders          Reminder[]
+  project            Project?    @relation("ProjectTasks", fields: [projectId], references: [id])
+  attachments        TaskAttachment[]
+
+  // new
+  customValues       TaskCustomValue[]
+  clientMailSendCount Int        @default(0)
+  emailLogs          EmailLog[]
+
+  @@unique([projectId, taskId]) // ensures sequential uniqueness inside a project
+}
+
+model TaskCustomField {
+  id        String   @id @default(uuid())
+  orgId     String
+  name      String          // e.g. "Priority Level"
+  type      String          // text | number | date | dropdown
+  options   String[]        // if dropdown
+  createdAt DateTime @default(now())
+
+  values    TaskCustomValue[]
+}
+
+model TaskCustomValue {
+  id      String   @id @default(uuid())
+  taskId  String
+  fieldId String
+  value   String
+
+  task    Task            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  field   TaskCustomField @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+}
+
+/*
+ Individual task occurrences (pre-generated)
+*/
+model TaskOccurrence {
+  id                 String      @id @default(uuid())
+  taskId             String      // FK to master task
+  
+  // Occurrence-specific data (can override master task defaults)
+  title              String      // Inherited from master, but can be customized
+  description        String?
+  startDate          DateTime    // Specific occurrence start (UTC)
+  dueDate            DateTime    // Specific occurrence due (UTC)
+  assignedToId       String?     // Can be different from master task
+  assignees          TaskOccurrenceAssignee[]
+  priority           Priority    @default(MEDIUM)
+  remarks            String?
+  status             TaskStatus  @default(OPEN)
+  
+  // Occurrence metadata
+  occurrenceIndex    Int         // 0-based index (0 = first occurrence)
+  isCompleted        Boolean     @default(false)
+  completedAt        DateTime?
+  completedBy        String?
+  completionNote     String?
+  
+  // Derived from master task (for easy querying)
+  clientId           String?
+  projectId          String?
+  
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  // Relations
+  task               Task        @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  attachments        TaskOccurrenceAttachment[]
+  sequentialId             Int         @default(autoincrement())
+  clientMailSendCount Int        @default(0)
+  startEmailSent     Boolean     @default(false)
+  startEmailSentAt   DateTime?
+  emailLogs          EmailLog[]
+
+  @@unique([taskId, occurrenceIndex], map: "taskId_occurrenceIndex")
+  @@index([taskId])
+  @@index([startDate])
+  @@index([dueDate])
+  @@index([assignedToId])
+  @@index([status])
+  @@index([isCompleted])
+  @@index([clientId])
+  @@index([projectId])
+}
+
+model TaskAssignee {
+  id     String @id @default(uuid())
+  taskId String
+  userId String
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, userId], name: "taskId_userId")
+  @@index([taskId])
+  @@index([userId])
+}
+
+model TaskOccurrenceAssignee {
+  id           String @id @default(uuid())
+  occurrenceId String
+  userId       String
+  occurrence   TaskOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+
+  @@unique([occurrenceId, userId], name: "occurrenceId_userId")
+  @@index([occurrenceId])
+  @@index([userId])
+}
+
+model TaskAttachment {
+  id        String   @id @default(uuid())
+  taskId    String
+  key       String
+  createdAt DateTime @default(now())
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+}
+
+/*
+ Occurrence-specific attachments (optional - for files added to specific occurrences)
+*/
+model TaskOccurrenceAttachment {
+  id           String   @id @default(uuid())
+  occurrenceId String
+  key          String
+  createdAt    DateTime @default(now())
+
+  occurrence TaskOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+}
+
+/*
+ Keep for backward compatibility, but mainly for audit trails now
+*/
+model CompletionLog {
+  id           String   @id @default(uuid())
+  taskId       String
+  occurrenceAt DateTime    // occurrence start instant in UTC
+  type         LogType  @default(COMPLETED)
+  completedBy  String?
+  note         String?
+  createdAt    DateTime @default(now())
+
+  @@unique([taskId, occurrenceAt])
+  @@index([taskId])
+}
+
+/*
+ Reminder queue table
+*/
+model Reminder {
+  id           String   @id @default(uuid())
+  taskId       String
+  occurrenceAt DateTime
+  remindAt     DateTime
+  channel      String?  // "email" | "push" | "in-app"
+  payload      Json?
+  sent         Boolean  @default(false)
+  sentAt       DateTime?
+  createdAt    DateTime @default(now())
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([sent])
+  @@index([taskId, remindAt])
+}
+
+enum LogType {
+  COMPLETED
+  SKIPPED
+  RESCHEDULED
+}
+
+enum CalendarEntryType {
+  REMINDER
+  APPOINTMENT
+}
+
+enum RecurrenceFreq {
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+model CalendarEntry {
+  id          String           @id @default(cuid())
+  createdById String
+  type        CalendarEntryType
+  title       String
+  description String?
+  start       DateTime
+  end         DateTime?
+  allDay      Boolean          @default(true)
+
+  // optional recurrence
+  freq        RecurrenceFreq?
+  interval    Int?
+  until       DateTime?
+  count       Int?
+
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([createdById])
+  @@index([start])
+}
+
+model Notification {
+  id           String   @id @default(cuid())
+  // who should see it
+  recipientId  String
+  // who caused it (optional)
+  actorId      String?
+  // reference
+  taskId       String?
+  occurrenceId String?
+
+  // display
+  type         String   // "TASK_ASSIGNED" | "TASK_UPDATED" | "OCCURRENCE_UPDATED" | "STATUS_CHANGED" | ...
+  title        String
+  body         String
+
+  // state
+  readAt       DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Conversation {
+  id          String                @id @default(cuid())
+  isGroup     Boolean               @default(false)
+  title       String?
+  createdById String
+  members     ConversationMember[]
+  messages    Message[]
+  updatedAt   DateTime              @updatedAt
+  createdAt   DateTime              @default(now())
+
+  @@index([updatedAt])
+}
+
+model ConversationMember {
+  id             String       @id @default(cuid())
+  conversationId String
+  userId         String
+  role           String?
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           DirectoryUser @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  senderId       String
+  body           String?
+  attachments    Json?
+  createdAt      DateTime     @default(now())
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         DirectoryUser @relation("MessageSender",fields: [senderId], references: [userId], onDelete: Cascade) // ✅ new relation
+  reads          MessageRead[]
+
+  @@index([conversationId, createdAt])
+}
+
+model MessageRead {
+  id        String   @id @default(cuid())
+  messageId String
+  userId    String
+  readAt    DateTime @default(now())
+
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId], name: "messageId_userId")
+  @@index([messageId])
+}
+
+model DirectoryUser {
+  id        String   @id @default(cuid())
+  userId    String   @unique // core-db user id
+  name      String
+  avatarUrl String?
+  lastActiveAt  DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  members   ConversationMember[]
+  messagesSent Message[]         @relation("MessageSender")
+}
+
+enum EmailStatus { 
+  SENT 
+  FAILED 
+  PENDING 
+  }
+
+model EmailLog {
+  id                String      @id @default(cuid())
+  occurrenceId      String?
+  taskId            String?
+  recipient         String
+  subject           String?
+  body              String?     // keep small
+  provider          String?
+  providerMessageId String?
+  status            EmailStatus @default(SENT)
+  error             String?
+  createdAt         DateTime    @default(now())
+
+  occurrence        TaskOccurrence? @relation(fields: [occurrenceId], references: [id])
+  task              Task?           @relation(fields: [taskId], references: [id])
+
+  @@index([occurrenceId])
+  @@index([taskId])
+  @@index([recipient])
+}
+
+// ---- Leave Management (org DB) ----
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum LeaveType {
+  SICK
+  CASUAL
+  PLANNED
+  UNPAID
+}
+
+model LeaveRequest {
+  id             String     @id @default(uuid())
+  requesterId    String     // core.User.id (no FK)
+  requesterName  String?    // snapshot for quick UI
+  requesterEmail String?    // snapshot for quick UI
+
+  type           LeaveType
+  reason         String?
+  startDate      DateTime
+  endDate        DateTime
+  days           Float
+
+  status         LeaveStatus @default(PENDING)
+  approverId     String?     // core admin id (optional)
+  adminComment   String?
+
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@index([requesterId])
+  @@index([status])
+  @@index([startDate])
+}
+
+// ---- Enums ----
+enum LicenseStatus {
+  ACTIVE
+  RENEWAL_DUE
+  EXPIRED
+  CANCELLED
+}
+
+enum LicenseAssigneeRole {
+  OWNER
+  WATCHER
+}
+
+// ---- Models ----
+model License {
+  id               String          @id @default(cuid())
+  title            String
+  licenseNumber    String?         @db.VarChar(191)
+  type             String?         // or use a ref table if you prefer
+  holder           String?          // "ORG" | "CLIENT"
+  clientId         String?
+  projectId        String?
+  serviceId        String?
+  url              String?
+
+  vendorId         String?         // optional reference to a Vendor table if you add one
+
+  issuedOn         DateTime?
+  validFrom        DateTime?
+  expiresOn        DateTime
+
+  // Reminder config
+  remindOffsets    Int[]           // days relative to expiresOn, negative values e.g. [-30,-7,-1]
+  gracePeriodDays  Int?             @default(15)
+  muted            Boolean?         @default(false)
+
+  // Assignment
+  responsibleId    String?
+  assignees        LicenseAssignee[]
+
+  // Scheduler/bookkeeping
+  status           LicenseStatus?   
+  nextReminderAt   DateTime?
+  lastReminderAt   DateTime?
+
+  // Audit
+  histories        LicenseHistory[]
+
+  // Attachments (to Spaces)
+  attachments      LicenseAttachment[]
+
+  scheduledReminders ScheduledReminder[]
+
+  // Common
+  createdById      String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@index([expiresOn])
+}
+
+model LicenseAssignee {
+  licenseId String
+  userId    String
+  role      LicenseAssigneeRole @default(WATCHER)
+
+  license   License @relation(fields: [licenseId], references: [id], onDelete: Cascade)
+
+  @@id([licenseId, userId])
+}
+
+model LicenseHistory {
+  id        String   @id @default(cuid())
+  licenseId String
+  action    String   // "CREATED" | "UPDATED" | "RENEWED" | "REMINDER_SENT" | "STATUS_CHANGED" | "CANCELLED"
+  payload   Json?
+  actorId   String?
+  at        DateTime @default(now())
+
+  license   License  @relation(fields: [licenseId], references: [id], onDelete: Cascade)
+
+  @@index([licenseId, at])
+}
+
+model LicenseAttachment {
+  id         String   @id @default(cuid())
+  licenseId  String
+  fileName   String
+  fileSize   Int
+  mimeType   String
+  // Store Spaces (S3) key and an optional cached public URL
+  spacesKey  String
+  cachedUrl  String?
+  uploadedAt DateTime @default(now())
+
+  license    License  @relation(fields: [licenseId], references: [id], onDelete: Cascade)
+
+  @@index([licenseId])
+}
+
+model ScheduledReminder {
+  id          String   @id @default(cuid())
+  licenseId   String
+  orgLocalDay DateTime // normalized date at local midnight for reporting (optional)
+  runAt       DateTime // exact send time in UTC
+  offsetDays  Int      // e.g., -7, -1
+  status      ReminderStatus @default(PENDING)
+  attempts    Int      @default(0)
+  lastError   String?
+  sentAt      DateTime?
+  meta        Json?    // snapshot: recipients, subject, etc.
+
+  license     License   @relation(fields: [licenseId], references: [id], onDelete: Cascade)
+
+  @@unique([licenseId, offsetDays]) // idempotency for a given license+offset
+  @@index([runAt, status])
+}
+
+enum ReminderStatus {
+  PENDING
+  SENT
+  FAILED
+  CANCELLED
+}

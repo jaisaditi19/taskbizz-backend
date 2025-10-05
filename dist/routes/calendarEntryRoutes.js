@@ -1,0 +1,13 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const calendarEntryController_1 = require("../controllers/calendarEntryController");
+const auth_1 = require("../middlewares/auth");
+const subscription_1 = require("../middlewares/subscription");
+const router = (0, express_1.Router)();
+router.post("/", auth_1.authenticate, subscription_1.requireWriteAccess, calendarEntryController_1.createCalendarEntry);
+router.get("/", auth_1.authenticate, calendarEntryController_1.getCalendarEntries);
+router.get("/:id", auth_1.authenticate, calendarEntryController_1.getCalendarEntry);
+router.patch("/:id", auth_1.authenticate, subscription_1.requireWriteAccess, calendarEntryController_1.updateCalendarEntry);
+router.delete("/:id", auth_1.authenticate, subscription_1.requireWriteAccess, calendarEntryController_1.deleteCalendarEntry);
+exports.default = router;

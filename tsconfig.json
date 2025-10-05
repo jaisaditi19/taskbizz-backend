@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["ES2020"],
+    "types": ["node", "express"],
+    "strict": true,
+    "typeRoots": ["./src/types", "./node_modules/@types"],
+    "esModuleInterop": true,
+    "moduleResolution": "node",
+    "module": "commonjs", // ensure Node can run compiled files
+    "outDir": "dist", // compiled JS output
+    "rootDir": "src", // where TS source lives
+    "skipLibCheck": true, // speeds up builds
+    "resolveJsonModule": true
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
+}
+

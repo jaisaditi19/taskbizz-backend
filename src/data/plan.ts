@@ -1,0 +1,43 @@
+export const plans = [
+  {
+    id: "1",
+    name: "Starter",
+    price: 249,
+    description:
+      "Best suited for early-stage teams. Full features, free for the first 3 months.",
+    features: [
+      "Minimum 3 Users",
+      "Task Management",
+      "Client Management",
+      "Recurring Tasks",
+      "Email Integration",
+      "Reports",
+      "Add Extra Users",
+    ],
+    extraUserPrice: null,
+    badge: "Free for 2 months",
+    highlighted: false,
+  },
+  {
+    id: "2",
+    name: "Premium Plan",
+    price: 649,
+    description: "For larger teams needing advanced features and integrations.",
+    features: [
+      "Minimum 3 Users",
+      "Task Management",
+      "Client Management",
+      "Recurring Tasks",
+      "Email Integration",
+      "Reports",
+      "Add Extra Users",
+      "WhatsApp Integration",
+      "Document Management",
+      "Document Mail Send",
+      "Self-Service Client Portal",
+      "Activity Logs",
+    ],
+    highlighted: true,
+    badge: "Coming Soon",
+  },
+];
