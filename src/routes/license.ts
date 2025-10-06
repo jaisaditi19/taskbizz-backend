@@ -48,7 +48,7 @@ router.post(
 
 router.delete("/:id/attachments/:attId", deleteAttachment);
 router.delete("/:id/attachments/:attId", deleteAttachment);
-router.post("/:id/attachments:bulk-delete", deleteAttachments); // JSON: { ids: ["...","..."] }
+router.post("/:id/attachments/bulk-delete", deleteAttachments); // JSON: { ids: ["...","..."] }
 
 router.delete("/:id", deleteLicense);
 

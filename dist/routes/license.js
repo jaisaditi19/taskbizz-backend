@@ -28,6 +28,6 @@ router.post("/:id/renew", licenseController_1.renewLicense);
 router.post("/:id/attachments", upload.array("files", 10), licenseController_1.addAttachments);
 router.delete("/:id/attachments/:attId", licenseController_1.deleteAttachment);
 router.delete("/:id/attachments/:attId", licenseController_1.deleteAttachment);
-router.post("/:id/attachments:bulk-delete", licenseController_1.deleteAttachments); // JSON: { ids: ["...","..."] }
+router.post("/:id/attachments/bulk-delete", licenseController_1.deleteAttachments); // JSON: { ids: ["...","..."] }
 router.delete("/:id", licenseController_1.deleteLicense);
 exports.default = router;
