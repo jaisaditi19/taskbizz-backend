@@ -3093,10 +3093,40 @@ const getDashboard = async (req, res) => {
         const selectedWeekEnd = selectedWeekStart
             ? (0, date_fns_1.endOfWeek)(selectedWeekStart, { weekStartsOn: 1 })
             : undefined;
+        const isAdmin = user?.role === "ADMIN";
         const isManager = user?.role === "MANAGER";
         const managerProjectScope = isManager
             ? { task: { project: { head: user.id } } }
             : {};
+        // --- local helpers (match original behavior) ---
+        const toDateSafe = (v) => {
+            if (!v)
+                return null;
+            const d = v instanceof Date ? v : new Date(v);
+            return isNaN(d.getTime()) ? null : d;
+        };
+        const startOfDaySafe = (d) => {
+            const c = new Date(d);
+            c.setHours(0, 0, 0, 0);
+            return c;
+        };
+        const endOfDaySafe = (d) => {
+            const c = new Date(d);
+            c.setHours(23, 59, 59, 999);
+            return c;
+        };
+        const isTaskCompleted = (t) => t.isCompleted === true ||
+            (t.status || t.task?.status || "").toString().toUpperCase() ===
+                "COMPLETED";
+        const isOverdue = (t) => {
+            const due = toDateSafe(t.dueDate);
+            if (!due)
+                return false;
+            if (isTaskCompleted(t))
+                return false;
+            return startOfDaySafe(due).getTime() < startOfDaySafe(now).getTime();
+        };
+        const isOpen = (t) => (t.status || t.task?.status || "").toString().toUpperCase() === "OPEN";
         const rid = crypto.randomUUID();
         console.log("[DEBUG] getDashboard: Starting data fetch...");
         console.time(`dashboard-main-query:${rid}`);
@@ -3127,7 +3157,7 @@ const getDashboard = async (req, res) => {
             ]);
             console.timeEnd(`dashboard-main-query:${rid}`);
             console.log(`[DEBUG] getDashboard: Found ${rawOccurrences.length} occurrences.`);
-            // Filter cancelled
+            // Filter cancelled (defensive)
             const occurrences = rawOccurrences.filter((t) => {
                 const occStatus = (t.status || "").toString().toUpperCase();
                 const taskStatus = (t.task?.status || "").toString().toUpperCase();
@@ -3146,25 +3176,33 @@ const getDashboard = async (req, res) => {
                 clients = clientsAll.filter((c) => clientIds.has(String(c.id)));
             }
             const projects = projectsAll;
-            const toDateSafe = (v) => {
-                if (!v)
-                    return null;
-                const d = v instanceof Date ? v : new Date(v);
-                return isNaN(d.getTime()) ? null : d;
-            };
-            const isTaskCompleted = (t) => t.isCompleted === true ||
-                (t.status || t.task?.status || "").toString().toUpperCase() ===
-                    "COMPLETED";
-            const isOverdue = (t) => {
-                const due = toDateSafe(t.dueDate);
-                if (!due)
-                    return false;
-                if (isTaskCompleted(t))
-                    return false;
-                return startOfDaySafe(due).getTime() < startOfDaySafe(now).getTime();
-            };
-            const isOpen = (t) => (t.status || t.task?.status || "").toString().toUpperCase() === "OPEN";
-            // Counts
+            // --- License stats (org-wide) ---
+            const startToday = startOfDaySafe(now);
+            const startTomorrow = (0, date_fns_1.addDays)(startToday, 1); // UI rule: today counts as expired
+            const monthStart = (0, date_fns_1.startOfMonth)(now);
+            const nextMonthStart = (0, date_fns_1.startOfMonth)((0, date_fns_1.addMonths)(now, 1));
+            const [totalLicenses, expiringThisMonth, expiredLicenses] = await Promise.all([
+                // Count all rows (or add your own soft-delete filter if needed)
+                orgPrisma.license.count(),
+                // Expiring *this month* (after today), inclusive of tomorrow, exclusive of next month start
+                orgPrisma.license.count({
+                    where: {
+                        expiresOn: {
+                            gte: startTomorrow, // tomorrow and later…
+                            lt: nextMonthStart, // …but still within this calendar month
+                        },
+                    },
+                }),
+                // Expired today or earlier (per UI rule)
+                orgPrisma.license.count({
+                    where: {
+                        expiresOn: {
+                            lt: startTomorrow,
+                        },
+                    },
+                }),
+            ]);
+            // ---------------- Counts / stats ----------------
             const completedTasks = await orgPrisma.taskOccurrence.count({
                 where: {
                     status: "COMPLETED",
@@ -3196,7 +3234,7 @@ const getDashboard = async (req, res) => {
             const completionRate = occurrences.length
                 ? Math.round((completedTasks / occurrences.length) * 100)
                 : 0;
-            // Customer report placeholder
+            // ---------------- Customer Report (basic placeholder) ----------------
             const clientAgg = clients.map((c) => ({
                 clientId: c.id,
                 clientName: c.name,
@@ -3206,7 +3244,7 @@ const getDashboard = async (req, res) => {
                 completedTasks: 0,
                 progressPct: 0,
             }));
-            // Project progress
+            // ---------------- Project Progress ----------------
             const projectProgress = projects.map((p) => {
                 const pts = occurrences.filter((t) => t.projectId === p.id);
                 const done = pts.filter(isTaskCompleted).length;
@@ -3218,13 +3256,13 @@ const getDashboard = async (req, res) => {
                     progress: pts.length ? Math.round((done / pts.length) * 100) : 0,
                 };
             });
-            // Users
+            // ---------------- Users (from core DB) ----------------
             let users = await prisma.user.findMany({ where: { orgId } });
             if (isManager) {
                 const involvedIds = new Set(occurrences.map((t) => String(t.assignedToId)).filter(Boolean));
                 users = users.filter((u) => involvedIds.has(String(u.id)));
             }
-            // Team status
+            // ---------------- Team Status ----------------
             const teamStatus = users.map((u) => {
                 const uTasks = occurrences.filter((t) => t.assignedToId === u.id);
                 return {
@@ -3238,9 +3276,48 @@ const getDashboard = async (req, res) => {
                         return due ? due >= todayStart && due <= todayEnd : false;
                     }).length,
                     openTasks: uTasks.filter((t) => !isTaskCompleted(t)).length,
+                    // Preserve original shape (issues placeholders)
+                    overdueIssues: 0,
+                    todayIssues: 0,
+                    openIssues: 0,
                 };
             });
-            // Task distribution
+            // ---------------- Period Digest (exactly like original) ----------------
+            const createdInWindow = occurrences.filter((t) => t.createdAt && t.createdAt >= dateStart && t.createdAt <= dateEnd);
+            const completedInWindow = occurrences.filter((t) => {
+                if (!isTaskCompleted(t))
+                    return false;
+                const completedTime = t.completedAt || t.updatedAt;
+                return (completedTime &&
+                    completedTime >= dateStart &&
+                    completedTime <= dateEnd);
+            });
+            const openInWindow = occurrences.filter((t) => !isTaskCompleted(t) &&
+                ((t.startDate && t.startDate <= dateEnd) ||
+                    (t.dueDate && t.dueDate >= dateStart) ||
+                    (t.createdAt && t.createdAt >= dateStart && t.createdAt <= dateEnd)));
+            const overdueInWindow = occurrences.filter((t) => {
+                if (isTaskCompleted(t))
+                    return false;
+                const due = toDateSafe(t.dueDate);
+                return due ? isOverdue(t) && due >= dateStart && due <= dateEnd : false;
+            });
+            // Top performers by completions in the window
+            const completedByUser = {};
+            completedInWindow.forEach((t) => {
+                if (!t.assignedToId)
+                    return;
+                completedByUser[t.assignedToId] =
+                    (completedByUser[t.assignedToId] || 0) + 1;
+            });
+            const topPerformers = Object.entries(completedByUser)
+                .map(([userId, completed]) => {
+                const u = users.find((x) => x.id === userId);
+                return { userId, name: u?.name ?? "Unknown", completed };
+            })
+                .sort((a, b) => b.completed - a.completed)
+                .slice(0, 3);
+            // ---------------- Task Distribution ----------------
             const counts = occurrences.reduce((acc, t) => {
                 const st = (t.status ||
                     t.task?.status ||
@@ -3250,11 +3327,8 @@ const getDashboard = async (req, res) => {
                 acc[st] = (acc[st] ?? 0) + 1;
                 return acc;
             }, {});
-            const taskDistribution = Object.entries(counts).map(([status, count]) => ({
-                status,
-                count,
-            }));
-            // Previous period deltas
+            const taskDistribution = Object.entries(counts).map(([status, count]) => ({ status, count }));
+            // ---------------- Trends (previous period; keep createdAt/completedAt OR) ----------------
             const prevStart = (0, date_fns_1.subDays)(dateStart, Math.floor((dateEnd.getTime() - dateStart.getTime()) / (1000 * 60 * 60 * 24)) + 1);
             const prevEnd = (0, date_fns_1.subDays)(dateStart, 1);
             const prevOccurrencesRaw = await orgPrisma.taskOccurrence.findMany({
@@ -3264,11 +3338,14 @@ const getDashboard = async (req, res) => {
                             OR: [
                                 { startDate: { gte: prevStart, lte: prevEnd } },
                                 { dueDate: { gte: prevStart, lte: prevEnd } },
+                                { createdAt: { gte: prevStart, lte: prevEnd } },
+                                { completedAt: { gte: prevStart, lte: prevEnd } },
                             ],
                         },
                         managerProjectScope,
                     ],
                 },
+                include: { task: { include: { project: { select: { head: true } } } } },
             });
             const prevFiltered = prevOccurrencesRaw.filter((t) => {
                 const occStatus = (t.status || "").toString().toUpperCase();
@@ -3305,7 +3382,7 @@ const getDashboard = async (req, res) => {
                 clients: 0,
                 users: 0,
             };
-            // ---------------- Final payload (no weeklyDigest) ----------------
+            // ---------------- Final payload (WITH weeklyDigest restored) ----------------
             const payload = {
                 stats: {
                     totalTasks: occurrences.length,
@@ -3320,6 +3397,12 @@ const getDashboard = async (req, res) => {
                     todayDue,
                     weekDue,
                     completionRate,
+                    licenses: {
+                        total: totalLicenses,
+                        expired: expiredLicenses,
+                        expiringThisMonth: expiringThisMonth, // <-- rename from "expiringSoon"
+                        active: Math.max(0, totalLicenses - expiredLicenses - expiringThisMonth),
+                    },
                 },
                 recentTasks: occurrences
                     .sort((a, b) => (b.startDate?.getTime() ?? 0) - (a.startDate?.getTime() ?? 0))
@@ -3331,9 +3414,21 @@ const getDashboard = async (req, res) => {
                 taskDistribution,
                 customerReport: clientAgg.slice(0, 8),
                 teamStatus,
+                weeklyDigest: {
+                    weekStart: dateStart,
+                    weekEnd: dateEnd,
+                    created: createdInWindow.length,
+                    completed: completedInWindow.length,
+                    open: openInWindow.length,
+                    overdue: overdueInWindow.length,
+                    completionRate: occurrences.length
+                        ? Math.round((completedInWindow.length / occurrences.length) * 100)
+                        : 0,
+                    topPerformers,
+                },
                 deltas,
             };
-            await (0, cache_1.cacheSetJson)(cacheKey, payload, 120);
+            await (0, cache_1.cacheSetJson)(cacheKey, payload, 120); // 120s TTL
             return payload;
         })();
         inflight.set(inflightKey, running);
