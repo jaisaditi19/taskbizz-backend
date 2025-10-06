@@ -7,6 +7,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { spaces } from "../config/spaces";
 import { randomUUID } from "crypto";
 import path from "path";
+import { invalidateOrgSnapshot } from "../utils/orgCache";
 
 type SeatCtx = {
   isTrial: boolean;
@@ -193,6 +194,7 @@ export const updateProfileWithLogo = async (
     try {
       if (orgUpdated && orgUpdated.id) {
         await invalidateOrgMeta(orgUpdated.id);
+        await invalidateOrgSnapshot(orgUpdated.id);
         console.info(`[user] invalidated org meta for org=${orgUpdated.id}`);
       }
     } catch (err) {

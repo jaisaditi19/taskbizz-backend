@@ -12,6 +12,7 @@ const s3_request_presigner_1 = require("@aws-sdk/s3-request-presigner");
 const spaces_1 = require("../config/spaces");
 const crypto_1 = require("crypto");
 const path_1 = __importDefault(require("path"));
+const orgCache_1 = require("../utils/orgCache");
 async function resolveSeatContext(req) {
     // Prefer middleware-provided context
     const ctx = req.subscriptionCtx;
@@ -159,6 +160,7 @@ const updateProfileWithLogo = async (req, res) => {
         try {
             if (orgUpdated && orgUpdated.id) {
                 await (0, container_1.invalidateOrgMeta)(orgUpdated.id);
+                await (0, orgCache_1.invalidateOrgSnapshot)(orgUpdated.id);
                 console.info(`[user] invalidated org meta for org=${orgUpdated.id}`);
             }
         }

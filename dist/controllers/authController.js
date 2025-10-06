@@ -11,6 +11,9 @@ const google_auth_library_1 = require("google-auth-library");
 const crypto_1 = require("crypto");
 const mailerSend_1 = require("../utils/mailerSend");
 const container_1 = require("../di/container");
+const orgCache_1 = require("../utils/orgCache");
+const orgCache_2 = require("../utils/orgCache");
+const spacesUtils_1 = require("../utils/spacesUtils");
 const RESEND_OTP_COOLDOWN_MS = 30 * 1000; // 30 seconds cooldown for resend
 const OTP_EXPIRY_MS = 10 * 60 * 1000; // OTP valid for 10 minutes
 const client = new google_auth_library_1.OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -117,6 +120,9 @@ const verifyOtp = async (req, res) => {
             sameSite: "lax",
             maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
         });
+        await (0, orgCache_1.cacheUserOrgPointer)(user.id, user.orgId ?? null);
+        if (user.orgId)
+            await (0, orgCache_1.primeOrgSnapshot)(user.orgId);
         return res.status(200).json({
             message: "OTP verified successfully",
             token: accessToken,
@@ -290,7 +296,7 @@ exports.verifyForgotPasswordOtp = verifyForgotPasswordOtp;
 const getMe = async (req, res) => {
     try {
         let userId = req.user?.id ?? null;
-        // Fallback: Authorization header
+        // Fallback #1: Authorization header (access token)
         if (!userId) {
             const authHeader = req.headers.authorization;
             if (authHeader?.startsWith("Bearer ")) {
@@ -303,7 +309,7 @@ const getMe = async (req, res) => {
                 }
             }
         }
-        // Fallback: refresh cookie
+        // Fallback #2: refresh token cookie
         if (!userId && req.cookies?.refreshToken) {
             try {
                 const decoded = jsonwebtoken_1.default.verify(req.cookies.refreshToken, process.env.JWT_REFRESH_SECRET);
@@ -317,24 +323,45 @@ const getMe = async (req, res) => {
             return res.status(401).json({ message: "Unauthorized" });
         }
         const prisma = (0, container_1.getCorePrisma)();
+        // Load user basics (lean)
         const user = await prisma.user.findUnique({
             where: { id: userId },
             select: { id: true, name: true, email: true, role: true, orgId: true },
         });
         if (!user)
             return res.status(404).json({ message: "User not found" });
-        const org = user.orgId
-            ? await prisma.organization.findUnique({
-                where: { id: user.orgId },
-                select: { id: true, name: true },
-            })
+        // Resolve orgId (DB first, then cached pointer)
+        const effectiveOrgId = user.orgId ?? (await (0, orgCache_2.getCachedUserOrgId)(user.id));
+        // Load cached org snapshot (expected to contain logoKey, name, status, id)
+        const orgSnap = effectiveOrgId
+            ? await (0, orgCache_2.getOrgSnapshot)(effectiveOrgId)
             : null;
+        // Presign a fresh logoUrl (short-lived) from logoKey
+        let logoUrl = null;
+        if (orgSnap?.logoUrl) {
+            try {
+                // keep expiry short to avoid stale URLs in the client cache
+                logoUrl = await (0, spacesUtils_1.getFileUrlFromSpaces)(orgSnap.logoUrl, 300); // 5 min
+            }
+            catch {
+                logoUrl = null;
+            }
+        }
         const subscriptionCtx = req.subscriptionCtx ?? null;
+        // Shape the org object for the client
+        const org = orgSnap
+            ? {
+                id: orgSnap.id,
+                name: orgSnap.name,
+                status: orgSnap.status ?? null,
+                logoUrl, // <- presigned, never stored
+            }
+            : null;
         return res.status(200).json({ user, org, subscriptionCtx });
     }
     catch (err) {
-        console.error("Error fetching /me:", err);
-        res.status(500).json({ message: "Internal Server Error" });
+        console.error("Error fetching /auth/me:", err);
+        return res.status(500).json({ message: "Internal Server Error" });
     }
 };
 exports.getMe = getMe;
@@ -386,6 +413,9 @@ const googleLogin = async (req, res) => {
             orgId: user.orgId,
         });
         const refreshTokenExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+        await (0, orgCache_1.cacheUserOrgPointer)(user.id, user.orgId ?? null);
+        if (user.orgId)
+            await (0, orgCache_1.primeOrgSnapshot)(user.orgId);
         await prisma.refreshToken.create({
             data: {
                 token: refreshToken,
@@ -571,6 +601,9 @@ const loginUser = async (req, res) => {
             role: user.role,
             orgId: user.orgId,
         });
+        await (0, orgCache_1.cacheUserOrgPointer)(user.id, user.orgId ?? null);
+        if (user.orgId)
+            await (0, orgCache_1.primeOrgSnapshot)(user.orgId);
         const refreshTokenExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
         await prisma.refreshToken.create({
             data: {
