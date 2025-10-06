@@ -11,7 +11,7 @@ import { attachSocket } from "./realtime/socket";
 import { PrismaClient } from "@prisma/client";
 import { registerCorePrisma, registerOrgPrismaFactory } from "./di/container";
 import { createOrgPrismaFactory } from "./di/orgPrismaFactory";
-import { orgMiddleware } from "./middlewares/orgMiddleware"; // path you used earlier
+import { orgMiddleware } from "./middlewares/orgMiddleware";
 
 // Routes Import
 import authRoutes from "./routes/auth";
@@ -22,7 +22,6 @@ import clientRoutes from "./routes/client";
 import projectRoutes from "./routes/project";
 import taskRoutes from "./routes/task";
 import planRoutes from "./routes/plan";
-// import eventRoutes from "./routes/event";
 import calendarEntryRoutes from "./routes/calendarEntryRoutes";
 import calendarEventsRoutes from "./routes/calendarEventsRoutes";
 import billingRoutes from "./routes/billing";
@@ -52,11 +51,28 @@ const corsOptions = {
   allowedHeaders: ["Content-Type", "Authorization", "Cache-Control"],
 };
 
-// app.options("*", cors(corsOptions));
-app.options("(.*)", cors(corsOptions));
+// Apply normal CORS middleware
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(cookieParser());
+
+// ---------- Manual catch-all for OPTIONS (Express 5 safe) ----------
+app.use((req, res, next) => {
+  if (req.method === "OPTIONS") {
+    res.header("Access-Control-Allow-Origin", req.headers.origin || "");
+    res.header("Access-Control-Allow-Credentials", "true");
+    res.header(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization, Cache-Control"
+    );
+    res.header(
+      "Access-Control-Allow-Methods",
+      "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+    );
+    return res.sendStatus(204);
+  }
+  next();
+});
 
 // ---------- HTTP + Socket ----------
 const server = http.createServer(app);
@@ -77,7 +93,6 @@ app.use((req, _res, next) => {
 });
 
 // ------------------- DI: Core Prisma + Org Factory -------------------
-// Dev-safe singleton to avoid multiple PrismaClient in hot reload
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   var __core_prisma__: PrismaClient | undefined;
@@ -95,14 +110,9 @@ if (process.env.NODE_ENV !== "production") {
 
 async function initPrismaAndFactories() {
   await corePrisma.$connect();
-  // register core prisma in your tiny container
   registerCorePrisma(corePrisma);
-
-  // create the org factory (LRU) and register the resolver function in the container
   const orgFactory = createOrgPrismaFactory(corePrisma);
-  // If your container expects a function, register the getOrgPrismaClient
   registerOrgPrismaFactory(orgFactory);
-
   return { orgFactory };
 }
 
@@ -132,12 +142,7 @@ app.use("/api/pincode", pincodeRoute);
 // ---------- Auth + Subscription (protected) ----------
 app.use(authenticate);
 app.use(orgMiddleware);
-
 app.use(attachSubscriptionContext);
-
-// ---------- Org middleware (resolve org prisma lazily) ----------
-// Place this AFTER authenticate so you can derive orgId from req.user.
-// It will set req.orgPrisma when an orgId is present (or you can call getOrgPrisma manually)
 
 // ---------- Routes (protected) ----------
 app.use("/api/payment", paymentRoutes);
@@ -155,7 +160,6 @@ app.use("/api/chat", chatRoutes);
 app.use("/api/leaves", leaveRoutes);
 app.use("/api/licenses", licenseRoutes);
 
-
 // ---------- Start server & graceful shutdown ----------
 const PORT = process.env.PORT || 8080;
 
@@ -170,34 +174,28 @@ initPrismaAndFactories()
       server.close();
 
       try {
-        // disconnect core prisma
         await corePrisma.$disconnect();
       } catch (e) {
         console.error("Error disconnecting core prisma", e);
       }
 
       try {
-        // disconnect all org clients
         await orgFactory.disconnectAll();
       } catch (e) {
         console.error("Error disconnecting org clients", e);
       }
 
-      // allow some time for logs to flush then exit
       setTimeout(() => process.exit(0), 200);
     };
 
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
-
-    // in case of uncaught exceptions, try to shutdown cleanly
     process.on("uncaughtException", (err) => {
       console.error("uncaughtException:", err);
       shutdown();
     });
     process.on("unhandledRejection", (reason) => {
       console.error("unhandledRejection:", reason);
-      // don't call shutdown immediately for rejections — but log for now
       process.exit(1);
     });
   })
