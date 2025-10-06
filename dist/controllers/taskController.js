@@ -3042,352 +3042,307 @@ async function sendTaskToClient(req, res) {
 //     res.status(500).json({ error: "Failed to send task" });
 //   }
 // }
-/**
- * Dashboard endpoint — cached per (start,end) window
- */
+const inflight = new Map();
+// --------- Safe date utils ---------
+function parseISODate(v) {
+    if (!v)
+        return null;
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? null : d;
+}
+function startOfDaySafe(d) {
+    const c = new Date(d);
+    c.setHours(0, 0, 0, 0);
+    return c;
+}
+function endOfDaySafe(d) {
+    const c = new Date(d);
+    c.setHours(23, 59, 59, 999);
+    return c;
+}
 const getDashboard = async (req, res) => {
     try {
         const prisma = (0, container_1.getCorePrisma)();
-        const orgId = req.user.orgId;
-        const { start, end, weekStart } = req.query;
         const user = req.user;
-        // Build cache key using start/end (serialize)
-        const cacheKey = (0, cache_1.orgKey)(orgId, "dashboard", `u=${user.id}:s=${start || ""}:e=${end || ""}` // <-- FIX: Add user ID here
-        );
-        const cached = (await (0, cache_1.cacheGetJson)(cacheKey));
-        if (cached) {
-            return res.json({ ...cached, cached: true });
-        }
-        const orgPrisma = await resolveOrgPrisma(req);
-        // use caller-provided window
-        const dateStart = new Date(start);
-        const dateEnd = new Date(end);
+        const orgId = user.orgId;
+        const { start, end, weekStart } = req.query;
         const now = new Date();
-        // For any "weekStart" UI convenience keep it, but primary window is dateStart/dateEnd
-        const selectedWeekStart = weekStart
-            ? new Date(weekStart)
-            : undefined;
+        const fallbackStart = (0, date_fns_1.startOfMonth)(now);
+        const fallbackEnd = (0, date_fns_1.endOfMonth)(now);
+        const dateStart = parseISODate(start) ?? fallbackStart;
+        const dateEnd = parseISODate(end) ?? fallbackEnd;
+        const cacheKey = (0, cache_1.orgKey)(orgId, "dashboard", `u=${user.id}:s=${dateStart.toISOString()}:e=${dateEnd.toISOString()}`);
+        const inflightKey = `${user.id}|${orgId}|${dateStart.toISOString()}|${dateEnd.toISOString()}|${weekStart ?? ""}`;
+        // Reuse result if same request is running
+        if (inflight.has(inflightKey)) {
+            try {
+                const shared = await inflight.get(inflightKey);
+                return res.json(shared);
+            }
+            catch (e) {
+                inflight.delete(inflightKey);
+                throw e;
+            }
+        }
+        // Cache hit
+        const cached = (await (0, cache_1.cacheGetJson)(cacheKey));
+        if (cached)
+            return res.json({ ...cached, cached: true });
+        const orgPrisma = await resolveOrgPrisma(req);
+        const selectedWeekStart = parseISODate(weekStart ?? "");
         const selectedWeekEnd = selectedWeekStart
             ? (0, date_fns_1.endOfWeek)(selectedWeekStart, { weekStartsOn: 1 })
             : undefined;
-        // -------- Role scope --------
-        const isAdmin = user?.role === "ADMIN";
         const isManager = user?.role === "MANAGER";
-        // Used inside Prisma where clauses to bind occurrences to manager's projects
         const managerProjectScope = isManager
             ? { task: { project: { head: user.id } } }
             : {};
-        console.log("[DEBUG] getDashboard: About to execute main Promise.all data fetch...");
-        console.time("dashboard-main-query");
-        // ---------------- Fetch org data ----------------
-        const [rawOccurrences, projectsAll, clientsAll] = await Promise.all([
-            orgPrisma.taskOccurrence.findMany({
+        const rid = crypto.randomUUID();
+        console.log("[DEBUG] getDashboard: Starting data fetch...");
+        console.time(`dashboard-main-query:${rid}`);
+        const running = (async () => {
+            // ---------------- Fetch org data ----------------
+            const [rawOccurrences, projectsAll, clientsAll] = await Promise.all([
+                orgPrisma.taskOccurrence.findMany({
+                    where: {
+                        AND: [
+                            {
+                                OR: [
+                                    { startDate: { gte: dateStart, lte: dateEnd } },
+                                    { dueDate: { gte: dateStart, lte: dateEnd } },
+                                ],
+                            },
+                            managerProjectScope,
+                        ],
+                    },
+                    include: {
+                        task: { include: { project: { select: { head: true } } } },
+                    },
+                    orderBy: { startDate: "asc" },
+                }),
+                orgPrisma.project.findMany({
+                    where: isManager ? { head: user.id } : undefined,
+                }),
+                orgPrisma.client.findMany(),
+            ]);
+            console.timeEnd(`dashboard-main-query:${rid}`);
+            console.log(`[DEBUG] getDashboard: Found ${rawOccurrences.length} occurrences.`);
+            // Filter cancelled
+            const occurrences = rawOccurrences.filter((t) => {
+                const occStatus = (t.status || "").toString().toUpperCase();
+                const taskStatus = (t.task?.status || "").toString().toUpperCase();
+                return occStatus !== "CANCELLED" && taskStatus !== "CANCELLED";
+            });
+            // Restrict visible clients for managers
+            let clients = clientsAll;
+            if (isManager) {
+                const clientIds = new Set();
+                for (const t of occurrences) {
+                    if (t.clientId)
+                        clientIds.add(String(t.clientId));
+                    if (t.task?.clientId)
+                        clientIds.add(String(t.task.clientId));
+                }
+                clients = clientsAll.filter((c) => clientIds.has(String(c.id)));
+            }
+            const projects = projectsAll;
+            const toDateSafe = (v) => {
+                if (!v)
+                    return null;
+                const d = v instanceof Date ? v : new Date(v);
+                return isNaN(d.getTime()) ? null : d;
+            };
+            const isTaskCompleted = (t) => t.isCompleted === true ||
+                (t.status || t.task?.status || "").toString().toUpperCase() ===
+                    "COMPLETED";
+            const isOverdue = (t) => {
+                const due = toDateSafe(t.dueDate);
+                if (!due)
+                    return false;
+                if (isTaskCompleted(t))
+                    return false;
+                return startOfDaySafe(due).getTime() < startOfDaySafe(now).getTime();
+            };
+            const isOpen = (t) => (t.status || t.task?.status || "").toString().toUpperCase() === "OPEN";
+            // Counts
+            const completedTasks = await orgPrisma.taskOccurrence.count({
+                where: {
+                    status: "COMPLETED",
+                    updatedAt: { gte: dateStart, lte: dateEnd },
+                    ...managerProjectScope,
+                },
+            });
+            const openTasks = occurrences.filter((t) => isOpen(t)).length;
+            const overdueTasks = occurrences.filter((t) => isOverdue(t));
+            const todayStart = startOfDaySafe(now);
+            const todayEnd = endOfDaySafe(now);
+            const todayDue = occurrences.filter((t) => {
+                if (isTaskCompleted(t))
+                    return false;
+                const due = toDateSafe(t.dueDate);
+                return due ? due >= todayStart && due <= todayEnd : false;
+            }).length;
+            const weekDue = selectedWeekStart && selectedWeekEnd
+                ? occurrences.filter((t) => {
+                    if (isTaskCompleted(t))
+                        return false;
+                    const due = toDateSafe(t.dueDate);
+                    return due
+                        ? due >= selectedWeekStart && due <= selectedWeekEnd
+                        : false;
+                }).length
+                : occurrences.filter((t) => !isTaskCompleted(t) && t.dueDate)
+                    .length;
+            const completionRate = occurrences.length
+                ? Math.round((completedTasks / occurrences.length) * 100)
+                : 0;
+            // Customer report placeholder
+            const clientAgg = clients.map((c) => ({
+                clientId: c.id,
+                clientName: c.name,
+                totalProjects: 0,
+                activeProjects: 0,
+                openTasks: 0,
+                completedTasks: 0,
+                progressPct: 0,
+            }));
+            // Project progress
+            const projectProgress = projects.map((p) => {
+                const pts = occurrences.filter((t) => t.projectId === p.id);
+                const done = pts.filter(isTaskCompleted).length;
+                return {
+                    id: p.id,
+                    name: p.name,
+                    totalTasks: pts.length,
+                    completedTasks: done,
+                    progress: pts.length ? Math.round((done / pts.length) * 100) : 0,
+                };
+            });
+            // Users
+            let users = await prisma.user.findMany({ where: { orgId } });
+            if (isManager) {
+                const involvedIds = new Set(occurrences.map((t) => String(t.assignedToId)).filter(Boolean));
+                users = users.filter((u) => involvedIds.has(String(u.id)));
+            }
+            // Team status
+            const teamStatus = users.map((u) => {
+                const uTasks = occurrences.filter((t) => t.assignedToId === u.id);
+                return {
+                    id: u.id,
+                    name: u.name,
+                    overdueTasks: uTasks.filter((t) => isOverdue(t)).length,
+                    todayTasks: uTasks.filter((t) => {
+                        if (isTaskCompleted(t))
+                            return false;
+                        const due = toDateSafe(t.dueDate);
+                        return due ? due >= todayStart && due <= todayEnd : false;
+                    }).length,
+                    openTasks: uTasks.filter((t) => !isTaskCompleted(t)).length,
+                };
+            });
+            // Task distribution
+            const counts = occurrences.reduce((acc, t) => {
+                const st = (t.status ||
+                    t.task?.status ||
+                    (isTaskCompleted(t) ? "COMPLETED" : "OPEN"))
+                    .toString()
+                    .toUpperCase();
+                acc[st] = (acc[st] ?? 0) + 1;
+                return acc;
+            }, {});
+            const taskDistribution = Object.entries(counts).map(([status, count]) => ({
+                status,
+                count,
+            }));
+            // Previous period deltas
+            const prevStart = (0, date_fns_1.subDays)(dateStart, Math.floor((dateEnd.getTime() - dateStart.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+            const prevEnd = (0, date_fns_1.subDays)(dateStart, 1);
+            const prevOccurrencesRaw = await orgPrisma.taskOccurrence.findMany({
                 where: {
                     AND: [
                         {
                             OR: [
-                                { startDate: { gte: dateStart, lte: dateEnd } },
-                                { dueDate: { gte: dateStart, lte: dateEnd } },
+                                { startDate: { gte: prevStart, lte: prevEnd } },
+                                { dueDate: { gte: prevStart, lte: prevEnd } },
                             ],
                         },
-                        managerProjectScope, // scopes for MANAGER; no-op for ADMIN/others
+                        managerProjectScope,
                     ],
                 },
-                include: {
-                    task: { include: { project: { select: { head: true } } } },
+            });
+            const prevFiltered = prevOccurrencesRaw.filter((t) => {
+                const occStatus = (t.status || "").toString().toUpperCase();
+                const taskStatus = (t.task?.status || "").toString().toUpperCase();
+                return occStatus !== "CANCELLED" && taskStatus !== "CANCELLED";
+            });
+            const prevCompleted = await orgPrisma.taskOccurrence.count({
+                where: {
+                    status: "COMPLETED",
+                    updatedAt: { gte: prevStart, lte: prevEnd },
+                    ...managerProjectScope,
                 },
-                orderBy: { startDate: "asc" },
-            }),
-            orgPrisma.project.findMany({
-                where: isManager ? { head: user.id } : undefined,
-            }),
-            orgPrisma.client.findMany(),
-        ]);
-        console.timeEnd("dashboard-main-query");
-        console.log(`[DEBUG] getDashboard: Main Promise.all finished. Found ${rawOccurrences.length} occurrences.`);
-        // If manager, reduce clients to only those referenced in scoped occurrences
-        let clients = clientsAll;
-        if (isManager) {
-            const clientIds = new Set();
-            for (const t of rawOccurrences) {
-                if (t.clientId)
-                    clientIds.add(String(t.clientId));
-                if (t.task?.clientId)
-                    clientIds.add(String(t.task.clientId));
-            }
-            clients = clientsAll.filter((c) => clientIds.has(String(c.id)));
-        }
-        const projects = projectsAll;
-        // Filter out cancelled occurrences/tasks (server-side defensive)
-        const occurrences = rawOccurrences.filter((t) => {
-            const occStatus = (t.status || "").toString().toUpperCase();
-            const taskStatus = (t.task?.status || "").toString().toUpperCase();
-            return occStatus !== "CANCELLED" && taskStatus !== "CANCELLED";
-        });
-        // helper to decide if completed (for various sections)
-        const isTaskCompleted = (t) => t.isCompleted === true ||
-            (t.status || t.task?.status || "").toString().toUpperCase() ===
-                "COMPLETED";
-        // defensive date helpers (date-only comparisons)
-        const toDateSafe = (v) => {
-            if (!v)
-                return null;
-            const d = v instanceof Date ? v : new Date(v);
-            return isNaN(d.getTime()) ? null : d;
-        };
-        const startOfDaySafe = (d) => {
-            const c = new Date(d);
-            c.setHours(0, 0, 0, 0);
-            return c;
-        };
-        const endOfDaySafe = (d) => {
-            const c = new Date(d);
-            c.setHours(23, 59, 59, 999);
-            return c;
-        };
-        // unified overdue helper: compare only dates (ignore time)
-        const isOverdue = (t) => {
-            const due = toDateSafe(t.dueDate);
-            if (!due)
-                return false;
-            if (isTaskCompleted(t))
-                return false;
-            return startOfDaySafe(due).getTime() < startOfDaySafe(now).getTime();
-        };
-        // ---------------- Completed count (within provided window) ----------------
-        const completedTasks = await orgPrisma.taskOccurrence.count({
-            where: {
-                status: "COMPLETED",
-                updatedAt: { gte: dateStart, lte: dateEnd },
-                ...managerProjectScope, // scope for manager
-            },
-        });
-        // OPEN detection (case-insensitive)
-        const isOpen = (t) => (t.status || t.task?.status || "").toString().toUpperCase() === "OPEN";
-        // openTasks: occurrences in window with OPEN status
-        const openTasks = occurrences.filter((t) => isOpen(t)).length;
-        // overdueTasks: occurrences in window that are not completed and due date's day is before today
-        const overdueTasks = occurrences.filter((t) => isOverdue(t));
-        // todayDue: occurrences in window due today (relative to server 'now')
-        const todayStart = startOfDaySafe(now);
-        const todayEnd = endOfDaySafe(now);
-        const todayDue = occurrences.filter((t) => {
-            if (isTaskCompleted(t))
-                return false;
-            const due = toDateSafe(t.dueDate);
-            return due ? due >= todayStart && due <= todayEnd : false;
-        }).length;
-        // weekDue: if caller gave weekStart, compute due within that week; otherwise use the full window
-        const weekDue = selectedWeekStart && selectedWeekEnd
-            ? occurrences.filter((t) => {
-                if (isTaskCompleted(t))
-                    return false;
-                const due = toDateSafe(t.dueDate);
-                return due
-                    ? due >= selectedWeekStart && due <= selectedWeekEnd
-                    : false;
-            }).length
-            : occurrences.filter((t) => !isTaskCompleted(t) && t.dueDate)
-                .length;
-        const completionRate = occurrences.length
-            ? Math.round((completedTasks / occurrences.length) * 100)
-            : 0;
-        // ---------------- Customer Report (basic) ----------------
-        const clientAgg = clients.map((c) => ({
-            clientId: c.id,
-            clientName: c.name,
-            totalProjects: 0,
-            activeProjects: 0,
-            openTasks: 0,
-            completedTasks: 0,
-            progressPct: 0,
-        }));
-        // ---------------- Project Progress ----------------
-        const projectProgress = projects.map((p) => {
-            const pts = occurrences.filter((t) => t.projectId === p.id);
-            const done = pts.filter(isTaskCompleted).length;
-            return {
-                id: p.id,
-                name: p.name,
-                totalTasks: pts.length,
-                completedTasks: done,
-                progress: pts.length ? Math.round((done / pts.length) * 100) : 0,
+            });
+            const prevOverdue = prevFiltered.filter((t) => isOverdue(t)).length;
+            const prevActiveProjects = projects.filter((p) => prevFiltered.some((t) => t.projectId === p.id && !isTaskCompleted(t))).length;
+            const deltas = {
+                completedTasks: prevCompleted === 0
+                    ? completedTasks > 0
+                        ? 100
+                        : 0
+                    : Math.round(((completedTasks - prevCompleted) / prevCompleted) * 100),
+                overdueTasks: prevOverdue === 0
+                    ? overdueTasks.length > 0
+                        ? 100
+                        : 0
+                    : Math.round(((overdueTasks.length - prevOverdue) / prevOverdue) * 100),
+                activeProjects: prevActiveProjects === 0
+                    ? projectProgress.length > 0
+                        ? 100
+                        : 0
+                    : Math.round(((projectProgress.length - prevActiveProjects) /
+                        prevActiveProjects) *
+                        100),
+                clients: 0,
+                users: 0,
             };
-        });
-        // ---------------- Get Users from core DB ----------------
-        let users = await prisma.user.findMany({ where: { orgId } });
-        // Optional: narrow for managers to only users involved in scoped occurrences
-        if (isManager) {
-            const involvedIds = new Set(occurrences.map((t) => String(t.assignedToId)).filter(Boolean));
-            users = users.filter((u) => involvedIds.has(String(u.id)));
-        }
-        // ---------------- Team Status ----------------
-        const teamStatus = users.map((u) => {
-            const uTasks = occurrences.filter((t) => t.assignedToId === u.id);
-            return {
-                id: u.id,
-                name: u.name,
-                overdueTasks: uTasks.filter((t) => isOverdue(t)).length,
-                todayTasks: uTasks.filter((t) => {
-                    if (isTaskCompleted(t))
-                        return false;
-                    const due = toDateSafe(t.dueDate);
-                    return due ? due >= todayStart && due <= todayEnd : false;
-                }).length,
-                openTasks: uTasks.filter((t) => !isTaskCompleted(t)).length,
-                overdueIssues: 0,
-                todayIssues: 0,
-                openIssues: 0,
+            // ---------------- Final payload (no weeklyDigest) ----------------
+            const payload = {
+                stats: {
+                    totalTasks: occurrences.length,
+                    completedTasks,
+                    overdueTasks: overdueTasks.length,
+                    openTasks,
+                    totalProjects: projects.length,
+                    activeProjects: projects.filter((p) => occurrences.some((t) => t.projectId === p.id && !isTaskCompleted(t))).length,
+                    totalClients: clients.length,
+                    totalUsers: users.length,
+                    activeUsers: users.filter((u) => u.status === "ACTIVE").length,
+                    todayDue,
+                    weekDue,
+                    completionRate,
+                },
+                recentTasks: occurrences
+                    .sort((a, b) => (b.startDate?.getTime() ?? 0) - (a.startDate?.getTime() ?? 0))
+                    .slice(0, 10),
+                overdueTasks,
+                projectProgress: projectProgress
+                    .sort((a, b) => b.totalTasks - a.totalTasks)
+                    .slice(0, 6),
+                taskDistribution,
+                customerReport: clientAgg.slice(0, 8),
+                teamStatus,
+                deltas,
             };
-        });
-        // ---------------- Period Digest (uses dateStart..dateEnd window) ----------------
-        const createdInWindow = occurrences.filter((t) => t.createdAt && t.createdAt >= dateStart && t.createdAt <= dateEnd);
-        const completedInWindow = occurrences.filter((t) => {
-            if (!isTaskCompleted(t))
-                return false;
-            const completedTime = t.completedAt || t.updatedAt;
-            return (completedTime && completedTime >= dateStart && completedTime <= dateEnd);
-        });
-        const openInWindow = occurrences.filter((t) => !isTaskCompleted(t) &&
-            ((t.startDate && t.startDate <= dateEnd) ||
-                (t.dueDate && t.dueDate >= dateStart) ||
-                (t.createdAt && t.createdAt >= dateStart && t.createdAt <= dateEnd)));
-        const overdueInWindow = occurrences.filter((t) => {
-            if (isTaskCompleted(t))
-                return false;
-            const due = toDateSafe(t.dueDate);
-            return due ? isOverdue(t) && due >= dateStart && due <= dateEnd : false;
-        });
-        // Top performers by completions in the window
-        const completedByUser = {};
-        completedInWindow.forEach((t) => {
-            if (!t.assignedToId)
-                return;
-            completedByUser[t.assignedToId] =
-                (completedByUser[t.assignedToId] || 0) + 1;
-        });
-        const topPerformers = Object.entries(completedByUser)
-            .map(([userId, completed]) => {
-            const u = users.find((x) => x.id === userId);
-            return { userId, name: u?.name ?? "Unknown", completed };
-        })
-            .sort((a, b) => b.completed - a.completed)
-            .slice(0, 3);
-        // ---------------- Task Distribution (for the window) ----------------
-        const counts = occurrences.reduce((acc, t) => {
-            const st = (t.status ||
-                t.task?.status ||
-                (isTaskCompleted(t) ? "COMPLETED" : "OPEN"))
-                .toString()
-                .toUpperCase();
-            acc[st] = (acc[st] ?? 0) + 1;
-            return acc;
-        }, {});
-        const taskDistribution = Object.entries(counts).map(([status, count]) => ({
-            status,
-            count,
-        }));
-        // ---------------- Trends (previous period) ----------------
-        const prevStart = (0, date_fns_1.subDays)(dateStart, Math.floor((dateEnd.getTime() - dateStart.getTime()) / (1000 * 60 * 60 * 24)) + 1);
-        const prevEnd = (0, date_fns_1.subDays)(dateStart, 1);
-        const prevOccurrencesRaw = await orgPrisma.taskOccurrence.findMany({
-            where: {
-                AND: [
-                    {
-                        OR: [
-                            { startDate: { gte: prevStart, lte: prevEnd } },
-                            { dueDate: { gte: prevStart, lte: prevEnd } },
-                            { createdAt: { gte: prevStart, lte: prevEnd } },
-                            { completedAt: { gte: prevStart, lte: prevEnd } },
-                        ],
-                    },
-                    managerProjectScope, // scope for manager
-                ],
-            },
-            include: { task: { include: { project: { select: { head: true } } } } },
-        });
-        const prevFiltered = prevOccurrencesRaw.filter((t) => {
-            const occStatus = (t.status || "").toString().toUpperCase();
-            const taskStatus = (t.task?.status || "").toString().toUpperCase();
-            return occStatus !== "CANCELLED" && taskStatus !== "CANCELLED";
-        });
-        const prevCompleted = await orgPrisma.taskOccurrence.count({
-            where: {
-                status: "COMPLETED",
-                updatedAt: { gte: prevStart, lte: prevEnd },
-                ...managerProjectScope,
-            },
-        });
-        const prevOverdue = prevFiltered.filter((t) => isOverdue(t)).length;
-        const prevActiveProjects = projects.filter((p) => prevFiltered.some((t) => t.projectId === p.id && !isTaskCompleted(t))).length;
-        const deltas = {
-            completedTasks: prevCompleted === 0
-                ? completedTasks > 0
-                    ? 100
-                    : 0
-                : Math.round(((completedTasks - prevCompleted) / prevCompleted) * 100),
-            overdueTasks: prevOverdue === 0
-                ? overdueTasks.length > 0
-                    ? 100
-                    : 0
-                : Math.round(((overdueTasks.length - prevOverdue) / prevOverdue) * 100),
-            activeProjects: prevActiveProjects === 0
-                ? projectProgress.length > 0
-                    ? 100
-                    : 0
-                : Math.round(((projectProgress.length - prevActiveProjects) /
-                    prevActiveProjects) *
-                    100),
-            clients: 0, // unchanged logic
-            users: 0, // unchanged logic
-        };
-        // ---------------- Response ----------------
-        const payload = {
-            stats: {
-                totalTasks: occurrences.length,
-                completedTasks,
-                overdueTasks: overdueTasks.length,
-                openTasks,
-                totalProjects: projects.length,
-                activeProjects: projects.filter((p) => occurrences.some((t) => t.projectId === p.id && !isTaskCompleted(t))).length,
-                totalClients: clients.length,
-                totalUsers: users.length,
-                activeUsers: users.filter((u) => u.status === "ACTIVE").length,
-                todayDue,
-                weekDue,
-                completionRate,
-            },
-            recentTasks: occurrences
-                .sort((a, b) => (b.startDate?.getTime() ?? 0) - (a.startDate?.getTime() ?? 0))
-                .slice(0, 10),
-            overdueTasks,
-            projectProgress: projectProgress
-                .sort((a, b) => b.totalTasks - a.totalTasks)
-                .slice(0, 6),
-            taskDistribution,
-            customerReport: clientAgg.slice(0, 8),
-            teamStatus,
-            weeklyDigest: {
-                weekStart: dateStart,
-                weekEnd: dateEnd,
-                created: createdInWindow.length,
-                completed: completedInWindow.length,
-                open: openInWindow.length,
-                overdue: overdueInWindow.length,
-                completionRate: occurrences.length
-                    ? Math.round((completedInWindow.length / occurrences.length) * 100)
-                    : 0,
-                topPerformers,
-            },
-            deltas,
-        };
-        // cache the dashboard payload short-term
-        await (0, cache_1.cacheSetJson)(cacheKey, payload, 120); // 120s TTL
-        res.json(payload);
+            await (0, cache_1.cacheSetJson)(cacheKey, payload, 120);
+            return payload;
+        })();
+        inflight.set(inflightKey, running);
+        const result = await running.finally(() => inflight.delete(inflightKey));
+        return res.json(result);
     }
     catch (err) {
         console.error(err);
-        res.status(500).json({ message: "Failed to load dashboard" });
+        return res.status(500).json({ message: "Failed to load dashboard" });
     }
 };
 exports.getDashboard = getDashboard;
