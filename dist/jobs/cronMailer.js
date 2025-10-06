@@ -458,7 +458,7 @@ process.on("SIGINT", async () => {
 // Start scheduler (dev: also run once immediately)
 (async () => {
     console.log(`Cron mailer running. Schedule: 12:00 PM Asia/Kolkata daily.`);
-    // task.start();
+    task.start();
     if (process.env.NODE_ENV !== "production") {
         console.log("Running sweepAllTenants() once immediately for testing...");
         await sweepAllTenants();
