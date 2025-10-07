@@ -31,7 +31,6 @@ export async function fetchGstinDetailsViaJamku(
 
   const d = resp?.data?.data ?? {};
 
-  console.log(d);
   // Jamku fields (commonly): lgnm (legal), tradeName, pan, sts, rgdt, adr, pincode, stateName/stateCode, city
   return {
     gstin,
