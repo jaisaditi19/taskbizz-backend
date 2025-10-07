@@ -33,6 +33,7 @@ const chat_1 = __importDefault(require("./routes/chat"));
 const pincode_1 = __importDefault(require("./routes/pincode"));
 const leave_1 = __importDefault(require("./routes/leave"));
 const license_1 = __importDefault(require("./routes/license"));
+const integrations_1 = __importDefault(require("./routes/integrations"));
 // Jobs / other middlewares
 require("./jobs/cleanup");
 require("./jobs/cronMailer");
@@ -122,6 +123,7 @@ app.use("/api/notification", notification_1.default);
 app.use("/api/chat", chat_1.default);
 app.use("/api/leaves", leave_1.default);
 app.use("/api/licenses", license_1.default);
+app.use("/api/integrations", integrations_1.default);
 // ---------- Start server & graceful shutdown ----------
 const PORT = process.env.PORT || 8080;
 initPrismaAndFactories()

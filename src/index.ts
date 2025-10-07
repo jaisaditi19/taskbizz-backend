@@ -30,6 +30,7 @@ import chatRoutes from "./routes/chat";
 import pincodeRoute from "./routes/pincode";
 import leaveRoutes from "./routes/leave";
 import licenseRoutes from "./routes/license";
+import integrationsRouter from "./routes/integrations";
 
 // Jobs / other middlewares
 import "./jobs/cleanup";
@@ -159,6 +160,7 @@ app.use("/api/notification", notificationRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/leaves", leaveRoutes);
 app.use("/api/licenses", licenseRoutes);
+app.use("/api/integrations", integrationsRouter);
 
 // ---------- Start server & graceful shutdown ----------
 const PORT = process.env.PORT || 8080;
