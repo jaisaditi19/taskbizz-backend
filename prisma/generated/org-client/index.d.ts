@@ -143,6 +143,11 @@ export type LicenseAttachment = $Result.DefaultSelection<Prisma.$LicenseAttachme
  * 
  */
 export type ScheduledReminder = $Result.DefaultSelection<Prisma.$ScheduledReminderPayload>
+/**
+ * Model GstReturnStatus
+ * 
+ */
+export type GstReturnStatus = $Result.DefaultSelection<Prisma.$GstReturnStatusPayload>
 
 /**
  * Enums
@@ -699,6 +704,16 @@ export class PrismaClient<
     * ```
     */
   get scheduledReminder(): Prisma.ScheduledReminderDelegate<ExtArgs, ClientOptions>;
+
+  /**
+   * `prisma.gstReturnStatus`: Exposes CRUD operations for the **GstReturnStatus** model.
+    * Example usage:
+    * ```ts
+    * // Fetch zero or more GstReturnStatuses
+    * const gstReturnStatuses = await prisma.gstReturnStatus.findMany()
+    * ```
+    */
+  get gstReturnStatus(): Prisma.GstReturnStatusDelegate<ExtArgs, ClientOptions>;
 }
 
 export namespace Prisma {
@@ -1164,7 +1179,8 @@ export namespace Prisma {
     LicenseAssignee: 'LicenseAssignee',
     LicenseHistory: 'LicenseHistory',
     LicenseAttachment: 'LicenseAttachment',
-    ScheduledReminder: 'ScheduledReminder'
+    ScheduledReminder: 'ScheduledReminder',
+    GstReturnStatus: 'GstReturnStatus'
   };
 
   export type ModelName = (typeof ModelName)[keyof typeof ModelName]
@@ -1183,7 +1199,7 @@ export namespace Prisma {
       omit: GlobalOmitOptions
     }
     meta: {
-      modelProps: "client" | "project" | "task" | "taskCustomField" | "taskCustomValue" | "taskOccurrence" | "taskAssignee" | "taskOccurrenceAssignee" | "taskAttachment" | "taskOccurrenceAttachment" | "completionLog" | "reminder" | "calendarEntry" | "notification" | "conversation" | "conversationMember" | "message" | "messageRead" | "directoryUser" | "emailLog" | "leaveRequest" | "license" | "licenseAssignee" | "licenseHistory" | "licenseAttachment" | "scheduledReminder"
+      modelProps: "client" | "project" | "task" | "taskCustomField" | "taskCustomValue" | "taskOccurrence" | "taskAssignee" | "taskOccurrenceAssignee" | "taskAttachment" | "taskOccurrenceAttachment" | "completionLog" | "reminder" | "calendarEntry" | "notification" | "conversation" | "conversationMember" | "message" | "messageRead" | "directoryUser" | "emailLog" | "leaveRequest" | "license" | "licenseAssignee" | "licenseHistory" | "licenseAttachment" | "scheduledReminder" | "gstReturnStatus"
       txIsolationLevel: Prisma.TransactionIsolationLevel
     }
     model: {
@@ -3111,6 +3127,80 @@ export namespace Prisma {
           }
         }
       }
+      GstReturnStatus: {
+        payload: Prisma.$GstReturnStatusPayload<ExtArgs>
+        fields: Prisma.GstReturnStatusFieldRefs
+        operations: {
+          findUnique: {
+            args: Prisma.GstReturnStatusFindUniqueArgs<ExtArgs>
+            result: $Utils.PayloadToResult<Prisma.$GstReturnStatusPayload> | null
+          }
+          findUniqueOrThrow: {
+            args: Prisma.GstReturnStatusFindUniqueOrThrowArgs<ExtArgs>
+            result: $Utils.PayloadToResult<Prisma.$GstReturnStatusPayload>
+          }
+          findFirst: {
+            args: Prisma.GstReturnStatusFindFirstArgs<ExtArgs>
+            result: $Utils.PayloadToResult<Prisma.$GstReturnStatusPayload> | null
+          }
+          findFirstOrThrow: {
+            args: Prisma.GstReturnStatusFindFirstOrThrowArgs<ExtArgs>
+            result: $Utils.PayloadToResult<Prisma.$GstReturnStatusPayload>
+          }
+          findMany: {
+            args: Prisma.GstReturnStatusFindManyArgs<ExtArgs>
+            result: $Utils.PayloadToResult<Prisma.$GstReturnStatusPayload>[]
+          }
+          create: {
+            args: Prisma.GstReturnStatusCreateArgs<ExtArgs>
+            result: $Utils.PayloadToResult<Prisma.$GstReturnStatusPayload>
+          }
+          createMany: {
+            args: Prisma.GstReturnStatusCreateManyArgs<ExtArgs>
+            result: BatchPayload
+          }
+          createManyAndReturn: {
+            args: Prisma.GstReturnStatusCreateManyAndReturnArgs<ExtArgs>
+            result: $Utils.PayloadToResult<Prisma.$GstReturnStatusPayload>[]
+          }
+          delete: {
+            args: Prisma.GstReturnStatusDeleteArgs<ExtArgs>
+            result: $Utils.PayloadToResult<Prisma.$GstReturnStatusPayload>
+          }
+          update: {
+            args: Prisma.GstReturnStatusUpdateArgs<ExtArgs>
+            result: $Utils.PayloadToResult<Prisma.$GstReturnStatusPayload>
+          }
+          deleteMany: {
+            args: Prisma.GstReturnStatusDeleteManyArgs<ExtArgs>
+            result: BatchPayload
+          }
+          updateMany: {
+            args: Prisma.GstReturnStatusUpdateManyArgs<ExtArgs>
+            result: BatchPayload
+          }
+          updateManyAndReturn: {
+            args: Prisma.GstReturnStatusUpdateManyAndReturnArgs<ExtArgs>
+            result: $Utils.PayloadToResult<Prisma.$GstReturnStatusPayload>[]
+          }
+          upsert: {
+            args: Prisma.GstReturnStatusUpsertArgs<ExtArgs>
+            result: $Utils.PayloadToResult<Prisma.$GstReturnStatusPayload>
+          }
+          aggregate: {
+            args: Prisma.GstReturnStatusAggregateArgs<ExtArgs>
+            result: $Utils.Optional<AggregateGstReturnStatus>
+          }
+          groupBy: {
+            args: Prisma.GstReturnStatusGroupByArgs<ExtArgs>
+            result: $Utils.Optional<GstReturnStatusGroupByOutputType>[]
+          }
+          count: {
+            args: Prisma.GstReturnStatusCountArgs<ExtArgs>
+            result: $Utils.Optional<GstReturnStatusCountAggregateOutputType> | number
+          }
+        }
+      }
     }
   } & {
     other: {
@@ -3229,6 +3319,7 @@ export namespace Prisma {
     licenseHistory?: LicenseHistoryOmit
     licenseAttachment?: LicenseAttachmentOmit
     scheduledReminder?: ScheduledReminderOmit
+    gstReturnStatus?: GstReturnStatusOmit
   }
 
   /* Types for Logging */
@@ -33003,6 +33094,1049 @@ export namespace Prisma {
 
 
   /**
+   * Model GstReturnStatus
+   */
+
+  export type AggregateGstReturnStatus = {
+    _count: GstReturnStatusCountAggregateOutputType | null
+    _min: GstReturnStatusMinAggregateOutputType | null
+    _max: GstReturnStatusMaxAggregateOutputType | null
+  }
+
+  export type GstReturnStatusMinAggregateOutputType = {
+    id: string | null
+    gstin: string | null
+    period: string | null
+    form: string | null
+    status: string | null
+    filingDate: Date | null
+    provider: string | null
+    fetchedAt: Date | null
+  }
+
+  export type GstReturnStatusMaxAggregateOutputType = {
+    id: string | null
+    gstin: string | null
+    period: string | null
+    form: string | null
+    status: string | null
+    filingDate: Date | null
+    provider: string | null
+    fetchedAt: Date | null
+  }
+
+  export type GstReturnStatusCountAggregateOutputType = {
+    id: number
+    gstin: number
+    period: number
+    form: number
+    status: number
+    filingDate: number
+    provider: number
+    raw: number
+    fetchedAt: number
+    _all: number
+  }
+
+
+  export type GstReturnStatusMinAggregateInputType = {
+    id?: true
+    gstin?: true
+    period?: true
+    form?: true
+    status?: true
+    filingDate?: true
+    provider?: true
+    fetchedAt?: true
+  }
+
+  export type GstReturnStatusMaxAggregateInputType = {
+    id?: true
+    gstin?: true
+    period?: true
+    form?: true
+    status?: true
+    filingDate?: true
+    provider?: true
+    fetchedAt?: true
+  }
+
+  export type GstReturnStatusCountAggregateInputType = {
+    id?: true
+    gstin?: true
+    period?: true
+    form?: true
+    status?: true
+    filingDate?: true
+    provider?: true
+    raw?: true
+    fetchedAt?: true
+    _all?: true
+  }
+
+  export type GstReturnStatusAggregateArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Filter which GstReturnStatus to aggregate.
+     */
+    where?: GstReturnStatusWhereInput
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/sorting Sorting Docs}
+     * 
+     * Determine the order of GstReturnStatuses to fetch.
+     */
+    orderBy?: GstReturnStatusOrderByWithRelationInput | GstReturnStatusOrderByWithRelationInput[]
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination#cursor-based-pagination Cursor Docs}
+     * 
+     * Sets the start position
+     */
+    cursor?: GstReturnStatusWhereUniqueInput
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination Pagination Docs}
+     * 
+     * Take `±n` GstReturnStatuses from the position of the cursor.
+     */
+    take?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination Pagination Docs}
+     * 
+     * Skip the first `n` GstReturnStatuses.
+     */
+    skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/aggregations Aggregation Docs}
+     * 
+     * Count returned GstReturnStatuses
+    **/
+    _count?: true | GstReturnStatusCountAggregateInputType
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/aggregations Aggregation Docs}
+     * 
+     * Select which fields to find the minimum value
+    **/
+    _min?: GstReturnStatusMinAggregateInputType
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/aggregations Aggregation Docs}
+     * 
+     * Select which fields to find the maximum value
+    **/
+    _max?: GstReturnStatusMaxAggregateInputType
+  }
+
+  export type GetGstReturnStatusAggregateType<T extends GstReturnStatusAggregateArgs> = {
+        [P in keyof T & keyof AggregateGstReturnStatus]: P extends '_count' | 'count'
+      ? T[P] extends true
+        ? number
+        : GetScalarType<T[P], AggregateGstReturnStatus[P]>
+      : GetScalarType<T[P], AggregateGstReturnStatus[P]>
+  }
+
+
+
+
+  export type GstReturnStatusGroupByArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    where?: GstReturnStatusWhereInput
+    orderBy?: GstReturnStatusOrderByWithAggregationInput | GstReturnStatusOrderByWithAggregationInput[]
+    by: GstReturnStatusScalarFieldEnum[] | GstReturnStatusScalarFieldEnum
+    having?: GstReturnStatusScalarWhereWithAggregatesInput
+    take?: number
+    skip?: number
+    _count?: GstReturnStatusCountAggregateInputType | true
+    _min?: GstReturnStatusMinAggregateInputType
+    _max?: GstReturnStatusMaxAggregateInputType
+  }
+
+  export type GstReturnStatusGroupByOutputType = {
+    id: string
+    gstin: string
+    period: string
+    form: string
+    status: string
+    filingDate: Date | null
+    provider: string
+    raw: JsonValue | null
+    fetchedAt: Date
+    _count: GstReturnStatusCountAggregateOutputType | null
+    _min: GstReturnStatusMinAggregateOutputType | null
+    _max: GstReturnStatusMaxAggregateOutputType | null
+  }
+
+  type GetGstReturnStatusGroupByPayload<T extends GstReturnStatusGroupByArgs> = Prisma.PrismaPromise<
+    Array<
+      PickEnumerable<GstReturnStatusGroupByOutputType, T['by']> &
+        {
+          [P in ((keyof T) & (keyof GstReturnStatusGroupByOutputType))]: P extends '_count'
+            ? T[P] extends boolean
+              ? number
+              : GetScalarType<T[P], GstReturnStatusGroupByOutputType[P]>
+            : GetScalarType<T[P], GstReturnStatusGroupByOutputType[P]>
+        }
+      >
+    >
+
+
+  export type GstReturnStatusSelect<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetSelect<{
+    id?: boolean
+    gstin?: boolean
+    period?: boolean
+    form?: boolean
+    status?: boolean
+    filingDate?: boolean
+    provider?: boolean
+    raw?: boolean
+    fetchedAt?: boolean
+  }, ExtArgs["result"]["gstReturnStatus"]>
+
+  export type GstReturnStatusSelectCreateManyAndReturn<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetSelect<{
+    id?: boolean
+    gstin?: boolean
+    period?: boolean
+    form?: boolean
+    status?: boolean
+    filingDate?: boolean
+    provider?: boolean
+    raw?: boolean
+    fetchedAt?: boolean
+  }, ExtArgs["result"]["gstReturnStatus"]>
+
+  export type GstReturnStatusSelectUpdateManyAndReturn<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetSelect<{
+    id?: boolean
+    gstin?: boolean
+    period?: boolean
+    form?: boolean
+    status?: boolean
+    filingDate?: boolean
+    provider?: boolean
+    raw?: boolean
+    fetchedAt?: boolean
+  }, ExtArgs["result"]["gstReturnStatus"]>
+
+  export type GstReturnStatusSelectScalar = {
+    id?: boolean
+    gstin?: boolean
+    period?: boolean
+    form?: boolean
+    status?: boolean
+    filingDate?: boolean
+    provider?: boolean
+    raw?: boolean
+    fetchedAt?: boolean
+  }
+
+  export type GstReturnStatusOmit<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetOmit<"id" | "gstin" | "period" | "form" | "status" | "filingDate" | "provider" | "raw" | "fetchedAt", ExtArgs["result"]["gstReturnStatus"]>
+
+  export type $GstReturnStatusPayload<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    name: "GstReturnStatus"
+    objects: {}
+    scalars: $Extensions.GetPayloadResult<{
+      id: string
+      gstin: string
+      period: string
+      form: string
+      status: string
+      filingDate: Date | null
+      provider: string
+      raw: Prisma.JsonValue | null
+      fetchedAt: Date
+    }, ExtArgs["result"]["gstReturnStatus"]>
+    composites: {}
+  }
+
+  type GstReturnStatusGetPayload<S extends boolean | null | undefined | GstReturnStatusDefaultArgs> = $Result.GetResult<Prisma.$GstReturnStatusPayload, S>
+
+  type GstReturnStatusCountArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> =
+    Omit<GstReturnStatusFindManyArgs, 'select' | 'include' | 'distinct' | 'omit'> & {
+      select?: GstReturnStatusCountAggregateInputType | true
+    }
+
+  export interface GstReturnStatusDelegate<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs, GlobalOmitOptions = {}> {
+    [K: symbol]: { types: Prisma.TypeMap<ExtArgs>['model']['GstReturnStatus'], meta: { name: 'GstReturnStatus' } }
+    /**
+     * Find zero or one GstReturnStatus that matches the filter.
+     * @param {GstReturnStatusFindUniqueArgs} args - Arguments to find a GstReturnStatus
+     * @example
+     * // Get one GstReturnStatus
+     * const gstReturnStatus = await prisma.gstReturnStatus.findUnique({
+     *   where: {
+     *     // ... provide filter here
+     *   }
+     * })
+     */
+    findUnique<T extends GstReturnStatusFindUniqueArgs>(args: SelectSubset<T, GstReturnStatusFindUniqueArgs<ExtArgs>>): Prisma__GstReturnStatusClient<$Result.GetResult<Prisma.$GstReturnStatusPayload<ExtArgs>, T, "findUnique", GlobalOmitOptions> | null, null, ExtArgs, GlobalOmitOptions>
+
+    /**
+     * Find one GstReturnStatus that matches the filter or throw an error with `error.code='P2025'`
+     * if no matches were found.
+     * @param {GstReturnStatusFindUniqueOrThrowArgs} args - Arguments to find a GstReturnStatus
+     * @example
+     * // Get one GstReturnStatus
+     * const gstReturnStatus = await prisma.gstReturnStatus.findUniqueOrThrow({
+     *   where: {
+     *     // ... provide filter here
+     *   }
+     * })
+     */
+    findUniqueOrThrow<T extends GstReturnStatusFindUniqueOrThrowArgs>(args: SelectSubset<T, GstReturnStatusFindUniqueOrThrowArgs<ExtArgs>>): Prisma__GstReturnStatusClient<$Result.GetResult<Prisma.$GstReturnStatusPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions>, never, ExtArgs, GlobalOmitOptions>
+
+    /**
+     * Find the first GstReturnStatus that matches the filter.
+     * Note, that providing `undefined` is treated as the value not being there.
+     * Read more here: https://pris.ly/d/null-undefined
+     * @param {GstReturnStatusFindFirstArgs} args - Arguments to find a GstReturnStatus
+     * @example
+     * // Get one GstReturnStatus
+     * const gstReturnStatus = await prisma.gstReturnStatus.findFirst({
+     *   where: {
+     *     // ... provide filter here
+     *   }
+     * })
+     */
+    findFirst<T extends GstReturnStatusFindFirstArgs>(args?: SelectSubset<T, GstReturnStatusFindFirstArgs<ExtArgs>>): Prisma__GstReturnStatusClient<$Result.GetResult<Prisma.$GstReturnStatusPayload<ExtArgs>, T, "findFirst", GlobalOmitOptions> | null, null, ExtArgs, GlobalOmitOptions>
+
+    /**
+     * Find the first GstReturnStatus that matches the filter or
+     * throw `PrismaKnownClientError` with `P2025` code if no matches were found.
+     * Note, that providing `undefined` is treated as the value not being there.
+     * Read more here: https://pris.ly/d/null-undefined
+     * @param {GstReturnStatusFindFirstOrThrowArgs} args - Arguments to find a GstReturnStatus
+     * @example
+     * // Get one GstReturnStatus
+     * const gstReturnStatus = await prisma.gstReturnStatus.findFirstOrThrow({
+     *   where: {
+     *     // ... provide filter here
+     *   }
+     * })
+     */
+    findFirstOrThrow<T extends GstReturnStatusFindFirstOrThrowArgs>(args?: SelectSubset<T, GstReturnStatusFindFirstOrThrowArgs<ExtArgs>>): Prisma__GstReturnStatusClient<$Result.GetResult<Prisma.$GstReturnStatusPayload<ExtArgs>, T, "findFirstOrThrow", GlobalOmitOptions>, never, ExtArgs, GlobalOmitOptions>
+
+    /**
+     * Find zero or more GstReturnStatuses that matches the filter.
+     * Note, that providing `undefined` is treated as the value not being there.
+     * Read more here: https://pris.ly/d/null-undefined
+     * @param {GstReturnStatusFindManyArgs} args - Arguments to filter and select certain fields only.
+     * @example
+     * // Get all GstReturnStatuses
+     * const gstReturnStatuses = await prisma.gstReturnStatus.findMany()
+     * 
+     * // Get first 10 GstReturnStatuses
+     * const gstReturnStatuses = await prisma.gstReturnStatus.findMany({ take: 10 })
+     * 
+     * // Only select the `id`
+     * const gstReturnStatusWithIdOnly = await prisma.gstReturnStatus.findMany({ select: { id: true } })
+     * 
+     */
+    findMany<T extends GstReturnStatusFindManyArgs>(args?: SelectSubset<T, GstReturnStatusFindManyArgs<ExtArgs>>): Prisma.PrismaPromise<$Result.GetResult<Prisma.$GstReturnStatusPayload<ExtArgs>, T, "findMany", GlobalOmitOptions>>
+
+    /**
+     * Create a GstReturnStatus.
+     * @param {GstReturnStatusCreateArgs} args - Arguments to create a GstReturnStatus.
+     * @example
+     * // Create one GstReturnStatus
+     * const GstReturnStatus = await prisma.gstReturnStatus.create({
+     *   data: {
+     *     // ... data to create a GstReturnStatus
+     *   }
+     * })
+     * 
+     */
+    create<T extends GstReturnStatusCreateArgs>(args: SelectSubset<T, GstReturnStatusCreateArgs<ExtArgs>>): Prisma__GstReturnStatusClient<$Result.GetResult<Prisma.$GstReturnStatusPayload<ExtArgs>, T, "create", GlobalOmitOptions>, never, ExtArgs, GlobalOmitOptions>
+
+    /**
+     * Create many GstReturnStatuses.
+     * @param {GstReturnStatusCreateManyArgs} args - Arguments to create many GstReturnStatuses.
+     * @example
+     * // Create many GstReturnStatuses
+     * const gstReturnStatus = await prisma.gstReturnStatus.createMany({
+     *   data: [
+     *     // ... provide data here
+     *   ]
+     * })
+     *     
+     */
+    createMany<T extends GstReturnStatusCreateManyArgs>(args?: SelectSubset<T, GstReturnStatusCreateManyArgs<ExtArgs>>): Prisma.PrismaPromise<BatchPayload>
+
+    /**
+     * Create many GstReturnStatuses and returns the data saved in the database.
+     * @param {GstReturnStatusCreateManyAndReturnArgs} args - Arguments to create many GstReturnStatuses.
+     * @example
+     * // Create many GstReturnStatuses
+     * const gstReturnStatus = await prisma.gstReturnStatus.createManyAndReturn({
+     *   data: [
+     *     // ... provide data here
+     *   ]
+     * })
+     * 
+     * // Create many GstReturnStatuses and only return the `id`
+     * const gstReturnStatusWithIdOnly = await prisma.gstReturnStatus.createManyAndReturn({
+     *   select: { id: true },
+     *   data: [
+     *     // ... provide data here
+     *   ]
+     * })
+     * Note, that providing `undefined` is treated as the value not being there.
+     * Read more here: https://pris.ly/d/null-undefined
+     * 
+     */
+    createManyAndReturn<T extends GstReturnStatusCreateManyAndReturnArgs>(args?: SelectSubset<T, GstReturnStatusCreateManyAndReturnArgs<ExtArgs>>): Prisma.PrismaPromise<$Result.GetResult<Prisma.$GstReturnStatusPayload<ExtArgs>, T, "createManyAndReturn", GlobalOmitOptions>>
+
+    /**
+     * Delete a GstReturnStatus.
+     * @param {GstReturnStatusDeleteArgs} args - Arguments to delete one GstReturnStatus.
+     * @example
+     * // Delete one GstReturnStatus
+     * const GstReturnStatus = await prisma.gstReturnStatus.delete({
+     *   where: {
+     *     // ... filter to delete one GstReturnStatus
+     *   }
+     * })
+     * 
+     */
+    delete<T extends GstReturnStatusDeleteArgs>(args: SelectSubset<T, GstReturnStatusDeleteArgs<ExtArgs>>): Prisma__GstReturnStatusClient<$Result.GetResult<Prisma.$GstReturnStatusPayload<ExtArgs>, T, "delete", GlobalOmitOptions>, never, ExtArgs, GlobalOmitOptions>
+
+    /**
+     * Update one GstReturnStatus.
+     * @param {GstReturnStatusUpdateArgs} args - Arguments to update one GstReturnStatus.
+     * @example
+     * // Update one GstReturnStatus
+     * const gstReturnStatus = await prisma.gstReturnStatus.update({
+     *   where: {
+     *     // ... provide filter here
+     *   },
+     *   data: {
+     *     // ... provide data here
+     *   }
+     * })
+     * 
+     */
+    update<T extends GstReturnStatusUpdateArgs>(args: SelectSubset<T, GstReturnStatusUpdateArgs<ExtArgs>>): Prisma__GstReturnStatusClient<$Result.GetResult<Prisma.$GstReturnStatusPayload<ExtArgs>, T, "update", GlobalOmitOptions>, never, ExtArgs, GlobalOmitOptions>
+
+    /**
+     * Delete zero or more GstReturnStatuses.
+     * @param {GstReturnStatusDeleteManyArgs} args - Arguments to filter GstReturnStatuses to delete.
+     * @example
+     * // Delete a few GstReturnStatuses
+     * const { count } = await prisma.gstReturnStatus.deleteMany({
+     *   where: {
+     *     // ... provide filter here
+     *   }
+     * })
+     * 
+     */
+    deleteMany<T extends GstReturnStatusDeleteManyArgs>(args?: SelectSubset<T, GstReturnStatusDeleteManyArgs<ExtArgs>>): Prisma.PrismaPromise<BatchPayload>
+
+    /**
+     * Update zero or more GstReturnStatuses.
+     * Note, that providing `undefined` is treated as the value not being there.
+     * Read more here: https://pris.ly/d/null-undefined
+     * @param {GstReturnStatusUpdateManyArgs} args - Arguments to update one or more rows.
+     * @example
+     * // Update many GstReturnStatuses
+     * const gstReturnStatus = await prisma.gstReturnStatus.updateMany({
+     *   where: {
+     *     // ... provide filter here
+     *   },
+     *   data: {
+     *     // ... provide data here
+     *   }
+     * })
+     * 
+     */
+    updateMany<T extends GstReturnStatusUpdateManyArgs>(args: SelectSubset<T, GstReturnStatusUpdateManyArgs<ExtArgs>>): Prisma.PrismaPromise<BatchPayload>
+
+    /**
+     * Update zero or more GstReturnStatuses and returns the data updated in the database.
+     * @param {GstReturnStatusUpdateManyAndReturnArgs} args - Arguments to update many GstReturnStatuses.
+     * @example
+     * // Update many GstReturnStatuses
+     * const gstReturnStatus = await prisma.gstReturnStatus.updateManyAndReturn({
+     *   where: {
+     *     // ... provide filter here
+     *   },
+     *   data: [
+     *     // ... provide data here
+     *   ]
+     * })
+     * 
+     * // Update zero or more GstReturnStatuses and only return the `id`
+     * const gstReturnStatusWithIdOnly = await prisma.gstReturnStatus.updateManyAndReturn({
+     *   select: { id: true },
+     *   where: {
+     *     // ... provide filter here
+     *   },
+     *   data: [
+     *     // ... provide data here
+     *   ]
+     * })
+     * Note, that providing `undefined` is treated as the value not being there.
+     * Read more here: https://pris.ly/d/null-undefined
+     * 
+     */
+    updateManyAndReturn<T extends GstReturnStatusUpdateManyAndReturnArgs>(args: SelectSubset<T, GstReturnStatusUpdateManyAndReturnArgs<ExtArgs>>): Prisma.PrismaPromise<$Result.GetResult<Prisma.$GstReturnStatusPayload<ExtArgs>, T, "updateManyAndReturn", GlobalOmitOptions>>
+
+    /**
+     * Create or update one GstReturnStatus.
+     * @param {GstReturnStatusUpsertArgs} args - Arguments to update or create a GstReturnStatus.
+     * @example
+     * // Update or create a GstReturnStatus
+     * const gstReturnStatus = await prisma.gstReturnStatus.upsert({
+     *   create: {
+     *     // ... data to create a GstReturnStatus
+     *   },
+     *   update: {
+     *     // ... in case it already exists, update
+     *   },
+     *   where: {
+     *     // ... the filter for the GstReturnStatus we want to update
+     *   }
+     * })
+     */
+    upsert<T extends GstReturnStatusUpsertArgs>(args: SelectSubset<T, GstReturnStatusUpsertArgs<ExtArgs>>): Prisma__GstReturnStatusClient<$Result.GetResult<Prisma.$GstReturnStatusPayload<ExtArgs>, T, "upsert", GlobalOmitOptions>, never, ExtArgs, GlobalOmitOptions>
+
+
+    /**
+     * Count the number of GstReturnStatuses.
+     * Note, that providing `undefined` is treated as the value not being there.
+     * Read more here: https://pris.ly/d/null-undefined
+     * @param {GstReturnStatusCountArgs} args - Arguments to filter GstReturnStatuses to count.
+     * @example
+     * // Count the number of GstReturnStatuses
+     * const count = await prisma.gstReturnStatus.count({
+     *   where: {
+     *     // ... the filter for the GstReturnStatuses we want to count
+     *   }
+     * })
+    **/
+    count<T extends GstReturnStatusCountArgs>(
+      args?: Subset<T, GstReturnStatusCountArgs>,
+    ): Prisma.PrismaPromise<
+      T extends $Utils.Record<'select', any>
+        ? T['select'] extends true
+          ? number
+          : GetScalarType<T['select'], GstReturnStatusCountAggregateOutputType>
+        : number
+    >
+
+    /**
+     * Allows you to perform aggregations operations on a GstReturnStatus.
+     * Note, that providing `undefined` is treated as the value not being there.
+     * Read more here: https://pris.ly/d/null-undefined
+     * @param {GstReturnStatusAggregateArgs} args - Select which aggregations you would like to apply and on what fields.
+     * @example
+     * // Ordered by age ascending
+     * // Where email contains prisma.io
+     * // Limited to the 10 users
+     * const aggregations = await prisma.user.aggregate({
+     *   _avg: {
+     *     age: true,
+     *   },
+     *   where: {
+     *     email: {
+     *       contains: "prisma.io",
+     *     },
+     *   },
+     *   orderBy: {
+     *     age: "asc",
+     *   },
+     *   take: 10,
+     * })
+    **/
+    aggregate<T extends GstReturnStatusAggregateArgs>(args: Subset<T, GstReturnStatusAggregateArgs>): Prisma.PrismaPromise<GetGstReturnStatusAggregateType<T>>
+
+    /**
+     * Group by GstReturnStatus.
+     * Note, that providing `undefined` is treated as the value not being there.
+     * Read more here: https://pris.ly/d/null-undefined
+     * @param {GstReturnStatusGroupByArgs} args - Group by arguments.
+     * @example
+     * // Group by city, order by createdAt, get count
+     * const result = await prisma.user.groupBy({
+     *   by: ['city', 'createdAt'],
+     *   orderBy: {
+     *     createdAt: true
+     *   },
+     *   _count: {
+     *     _all: true
+     *   },
+     * })
+     * 
+    **/
+    groupBy<
+      T extends GstReturnStatusGroupByArgs,
+      HasSelectOrTake extends Or<
+        Extends<'skip', Keys<T>>,
+        Extends<'take', Keys<T>>
+      >,
+      OrderByArg extends True extends HasSelectOrTake
+        ? { orderBy: GstReturnStatusGroupByArgs['orderBy'] }
+        : { orderBy?: GstReturnStatusGroupByArgs['orderBy'] },
+      OrderFields extends ExcludeUnderscoreKeys<Keys<MaybeTupleToUnion<T['orderBy']>>>,
+      ByFields extends MaybeTupleToUnion<T['by']>,
+      ByValid extends Has<ByFields, OrderFields>,
+      HavingFields extends GetHavingFields<T['having']>,
+      HavingValid extends Has<ByFields, HavingFields>,
+      ByEmpty extends T['by'] extends never[] ? True : False,
+      InputErrors extends ByEmpty extends True
+      ? `Error: "by" must not be empty.`
+      : HavingValid extends False
+      ? {
+          [P in HavingFields]: P extends ByFields
+            ? never
+            : P extends string
+            ? `Error: Field "${P}" used in "having" needs to be provided in "by".`
+            : [
+                Error,
+                'Field ',
+                P,
+                ` in "having" needs to be provided in "by"`,
+              ]
+        }[HavingFields]
+      : 'take' extends Keys<T>
+      ? 'orderBy' extends Keys<T>
+        ? ByValid extends True
+          ? {}
+          : {
+              [P in OrderFields]: P extends ByFields
+                ? never
+                : `Error: Field "${P}" in "orderBy" needs to be provided in "by"`
+            }[OrderFields]
+        : 'Error: If you provide "take", you also need to provide "orderBy"'
+      : 'skip' extends Keys<T>
+      ? 'orderBy' extends Keys<T>
+        ? ByValid extends True
+          ? {}
+          : {
+              [P in OrderFields]: P extends ByFields
+                ? never
+                : `Error: Field "${P}" in "orderBy" needs to be provided in "by"`
+            }[OrderFields]
+        : 'Error: If you provide "skip", you also need to provide "orderBy"'
+      : ByValid extends True
+      ? {}
+      : {
+          [P in OrderFields]: P extends ByFields
+            ? never
+            : `Error: Field "${P}" in "orderBy" needs to be provided in "by"`
+        }[OrderFields]
+    >(args: SubsetIntersection<T, GstReturnStatusGroupByArgs, OrderByArg> & InputErrors): {} extends InputErrors ? GetGstReturnStatusGroupByPayload<T> : Prisma.PrismaPromise<InputErrors>
+  /**
+   * Fields of the GstReturnStatus model
+   */
+  readonly fields: GstReturnStatusFieldRefs;
+  }
+
+  /**
+   * The delegate class that acts as a "Promise-like" for GstReturnStatus.
+   * Why is this prefixed with `Prisma__`?
+   * Because we want to prevent naming conflicts as mentioned in
+   * https://github.com/prisma/prisma-client-js/issues/707
+   */
+  export interface Prisma__GstReturnStatusClient<T, Null = never, ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs, GlobalOmitOptions = {}> extends Prisma.PrismaPromise<T> {
+    readonly [Symbol.toStringTag]: "PrismaPromise"
+    /**
+     * Attaches callbacks for the resolution and/or rejection of the Promise.
+     * @param onfulfilled The callback to execute when the Promise is resolved.
+     * @param onrejected The callback to execute when the Promise is rejected.
+     * @returns A Promise for the completion of which ever callback is executed.
+     */
+    then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): $Utils.JsPromise<TResult1 | TResult2>
+    /**
+     * Attaches a callback for only the rejection of the Promise.
+     * @param onrejected The callback to execute when the Promise is rejected.
+     * @returns A Promise for the completion of the callback.
+     */
+    catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): $Utils.JsPromise<T | TResult>
+    /**
+     * Attaches a callback that is invoked when the Promise is settled (fulfilled or rejected). The
+     * resolved value cannot be modified from the callback.
+     * @param onfinally The callback to execute when the Promise is settled (fulfilled or rejected).
+     * @returns A Promise for the completion of the callback.
+     */
+    finally(onfinally?: (() => void) | undefined | null): $Utils.JsPromise<T>
+  }
+
+
+
+
+  /**
+   * Fields of the GstReturnStatus model
+   */
+  interface GstReturnStatusFieldRefs {
+    readonly id: FieldRef<"GstReturnStatus", 'String'>
+    readonly gstin: FieldRef<"GstReturnStatus", 'String'>
+    readonly period: FieldRef<"GstReturnStatus", 'String'>
+    readonly form: FieldRef<"GstReturnStatus", 'String'>
+    readonly status: FieldRef<"GstReturnStatus", 'String'>
+    readonly filingDate: FieldRef<"GstReturnStatus", 'DateTime'>
+    readonly provider: FieldRef<"GstReturnStatus", 'String'>
+    readonly raw: FieldRef<"GstReturnStatus", 'Json'>
+    readonly fetchedAt: FieldRef<"GstReturnStatus", 'DateTime'>
+  }
+    
+
+  // Custom InputTypes
+  /**
+   * GstReturnStatus findUnique
+   */
+  export type GstReturnStatusFindUniqueArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the GstReturnStatus
+     */
+    select?: GstReturnStatusSelect<ExtArgs> | null
+    /**
+     * Omit specific fields from the GstReturnStatus
+     */
+    omit?: GstReturnStatusOmit<ExtArgs> | null
+    /**
+     * Filter, which GstReturnStatus to fetch.
+     */
+    where: GstReturnStatusWhereUniqueInput
+  }
+
+  /**
+   * GstReturnStatus findUniqueOrThrow
+   */
+  export type GstReturnStatusFindUniqueOrThrowArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the GstReturnStatus
+     */
+    select?: GstReturnStatusSelect<ExtArgs> | null
+    /**
+     * Omit specific fields from the GstReturnStatus
+     */
+    omit?: GstReturnStatusOmit<ExtArgs> | null
+    /**
+     * Filter, which GstReturnStatus to fetch.
+     */
+    where: GstReturnStatusWhereUniqueInput
+  }
+
+  /**
+   * GstReturnStatus findFirst
+   */
+  export type GstReturnStatusFindFirstArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the GstReturnStatus
+     */
+    select?: GstReturnStatusSelect<ExtArgs> | null
+    /**
+     * Omit specific fields from the GstReturnStatus
+     */
+    omit?: GstReturnStatusOmit<ExtArgs> | null
+    /**
+     * Filter, which GstReturnStatus to fetch.
+     */
+    where?: GstReturnStatusWhereInput
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/sorting Sorting Docs}
+     * 
+     * Determine the order of GstReturnStatuses to fetch.
+     */
+    orderBy?: GstReturnStatusOrderByWithRelationInput | GstReturnStatusOrderByWithRelationInput[]
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination#cursor-based-pagination Cursor Docs}
+     * 
+     * Sets the position for searching for GstReturnStatuses.
+     */
+    cursor?: GstReturnStatusWhereUniqueInput
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination Pagination Docs}
+     * 
+     * Take `±n` GstReturnStatuses from the position of the cursor.
+     */
+    take?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination Pagination Docs}
+     * 
+     * Skip the first `n` GstReturnStatuses.
+     */
+    skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of GstReturnStatuses.
+     */
+    distinct?: GstReturnStatusScalarFieldEnum | GstReturnStatusScalarFieldEnum[]
+  }
+
+  /**
+   * GstReturnStatus findFirstOrThrow
+   */
+  export type GstReturnStatusFindFirstOrThrowArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the GstReturnStatus
+     */
+    select?: GstReturnStatusSelect<ExtArgs> | null
+    /**
+     * Omit specific fields from the GstReturnStatus
+     */
+    omit?: GstReturnStatusOmit<ExtArgs> | null
+    /**
+     * Filter, which GstReturnStatus to fetch.
+     */
+    where?: GstReturnStatusWhereInput
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/sorting Sorting Docs}
+     * 
+     * Determine the order of GstReturnStatuses to fetch.
+     */
+    orderBy?: GstReturnStatusOrderByWithRelationInput | GstReturnStatusOrderByWithRelationInput[]
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination#cursor-based-pagination Cursor Docs}
+     * 
+     * Sets the position for searching for GstReturnStatuses.
+     */
+    cursor?: GstReturnStatusWhereUniqueInput
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination Pagination Docs}
+     * 
+     * Take `±n` GstReturnStatuses from the position of the cursor.
+     */
+    take?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination Pagination Docs}
+     * 
+     * Skip the first `n` GstReturnStatuses.
+     */
+    skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of GstReturnStatuses.
+     */
+    distinct?: GstReturnStatusScalarFieldEnum | GstReturnStatusScalarFieldEnum[]
+  }
+
+  /**
+   * GstReturnStatus findMany
+   */
+  export type GstReturnStatusFindManyArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the GstReturnStatus
+     */
+    select?: GstReturnStatusSelect<ExtArgs> | null
+    /**
+     * Omit specific fields from the GstReturnStatus
+     */
+    omit?: GstReturnStatusOmit<ExtArgs> | null
+    /**
+     * Filter, which GstReturnStatuses to fetch.
+     */
+    where?: GstReturnStatusWhereInput
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/sorting Sorting Docs}
+     * 
+     * Determine the order of GstReturnStatuses to fetch.
+     */
+    orderBy?: GstReturnStatusOrderByWithRelationInput | GstReturnStatusOrderByWithRelationInput[]
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination#cursor-based-pagination Cursor Docs}
+     * 
+     * Sets the position for listing GstReturnStatuses.
+     */
+    cursor?: GstReturnStatusWhereUniqueInput
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination Pagination Docs}
+     * 
+     * Take `±n` GstReturnStatuses from the position of the cursor.
+     */
+    take?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination Pagination Docs}
+     * 
+     * Skip the first `n` GstReturnStatuses.
+     */
+    skip?: number
+    distinct?: GstReturnStatusScalarFieldEnum | GstReturnStatusScalarFieldEnum[]
+  }
+
+  /**
+   * GstReturnStatus create
+   */
+  export type GstReturnStatusCreateArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the GstReturnStatus
+     */
+    select?: GstReturnStatusSelect<ExtArgs> | null
+    /**
+     * Omit specific fields from the GstReturnStatus
+     */
+    omit?: GstReturnStatusOmit<ExtArgs> | null
+    /**
+     * The data needed to create a GstReturnStatus.
+     */
+    data: XOR<GstReturnStatusCreateInput, GstReturnStatusUncheckedCreateInput>
+  }
+
+  /**
+   * GstReturnStatus createMany
+   */
+  export type GstReturnStatusCreateManyArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * The data used to create many GstReturnStatuses.
+     */
+    data: GstReturnStatusCreateManyInput | GstReturnStatusCreateManyInput[]
+    skipDuplicates?: boolean
+  }
+
+  /**
+   * GstReturnStatus createManyAndReturn
+   */
+  export type GstReturnStatusCreateManyAndReturnArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the GstReturnStatus
+     */
+    select?: GstReturnStatusSelectCreateManyAndReturn<ExtArgs> | null
+    /**
+     * Omit specific fields from the GstReturnStatus
+     */
+    omit?: GstReturnStatusOmit<ExtArgs> | null
+    /**
+     * The data used to create many GstReturnStatuses.
+     */
+    data: GstReturnStatusCreateManyInput | GstReturnStatusCreateManyInput[]
+    skipDuplicates?: boolean
+  }
+
+  /**
+   * GstReturnStatus update
+   */
+  export type GstReturnStatusUpdateArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the GstReturnStatus
+     */
+    select?: GstReturnStatusSelect<ExtArgs> | null
+    /**
+     * Omit specific fields from the GstReturnStatus
+     */
+    omit?: GstReturnStatusOmit<ExtArgs> | null
+    /**
+     * The data needed to update a GstReturnStatus.
+     */
+    data: XOR<GstReturnStatusUpdateInput, GstReturnStatusUncheckedUpdateInput>
+    /**
+     * Choose, which GstReturnStatus to update.
+     */
+    where: GstReturnStatusWhereUniqueInput
+  }
+
+  /**
+   * GstReturnStatus updateMany
+   */
+  export type GstReturnStatusUpdateManyArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * The data used to update GstReturnStatuses.
+     */
+    data: XOR<GstReturnStatusUpdateManyMutationInput, GstReturnStatusUncheckedUpdateManyInput>
+    /**
+     * Filter which GstReturnStatuses to update
+     */
+    where?: GstReturnStatusWhereInput
+    /**
+     * Limit how many GstReturnStatuses to update.
+     */
+    limit?: number
+  }
+
+  /**
+   * GstReturnStatus updateManyAndReturn
+   */
+  export type GstReturnStatusUpdateManyAndReturnArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the GstReturnStatus
+     */
+    select?: GstReturnStatusSelectUpdateManyAndReturn<ExtArgs> | null
+    /**
+     * Omit specific fields from the GstReturnStatus
+     */
+    omit?: GstReturnStatusOmit<ExtArgs> | null
+    /**
+     * The data used to update GstReturnStatuses.
+     */
+    data: XOR<GstReturnStatusUpdateManyMutationInput, GstReturnStatusUncheckedUpdateManyInput>
+    /**
+     * Filter which GstReturnStatuses to update
+     */
+    where?: GstReturnStatusWhereInput
+    /**
+     * Limit how many GstReturnStatuses to update.
+     */
+    limit?: number
+  }
+
+  /**
+   * GstReturnStatus upsert
+   */
+  export type GstReturnStatusUpsertArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the GstReturnStatus
+     */
+    select?: GstReturnStatusSelect<ExtArgs> | null
+    /**
+     * Omit specific fields from the GstReturnStatus
+     */
+    omit?: GstReturnStatusOmit<ExtArgs> | null
+    /**
+     * The filter to search for the GstReturnStatus to update in case it exists.
+     */
+    where: GstReturnStatusWhereUniqueInput
+    /**
+     * In case the GstReturnStatus found by the `where` argument doesn't exist, create a new GstReturnStatus with this data.
+     */
+    create: XOR<GstReturnStatusCreateInput, GstReturnStatusUncheckedCreateInput>
+    /**
+     * In case the GstReturnStatus was found with the provided `where` argument, update it with this data.
+     */
+    update: XOR<GstReturnStatusUpdateInput, GstReturnStatusUncheckedUpdateInput>
+  }
+
+  /**
+   * GstReturnStatus delete
+   */
+  export type GstReturnStatusDeleteArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the GstReturnStatus
+     */
+    select?: GstReturnStatusSelect<ExtArgs> | null
+    /**
+     * Omit specific fields from the GstReturnStatus
+     */
+    omit?: GstReturnStatusOmit<ExtArgs> | null
+    /**
+     * Filter which GstReturnStatus to delete.
+     */
+    where: GstReturnStatusWhereUniqueInput
+  }
+
+  /**
+   * GstReturnStatus deleteMany
+   */
+  export type GstReturnStatusDeleteManyArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Filter which GstReturnStatuses to delete
+     */
+    where?: GstReturnStatusWhereInput
+    /**
+     * Limit how many GstReturnStatuses to delete.
+     */
+    limit?: number
+  }
+
+  /**
+   * GstReturnStatus without action
+   */
+  export type GstReturnStatusDefaultArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the GstReturnStatus
+     */
+    select?: GstReturnStatusSelect<ExtArgs> | null
+    /**
+     * Omit specific fields from the GstReturnStatus
+     */
+    omit?: GstReturnStatusOmit<ExtArgs> | null
+  }
+
+
+  /**
    * Enums
    */
 
@@ -33401,6 +34535,21 @@ export namespace Prisma {
   };
 
   export type ScheduledReminderScalarFieldEnum = (typeof ScheduledReminderScalarFieldEnum)[keyof typeof ScheduledReminderScalarFieldEnum]
+
+
+  export const GstReturnStatusScalarFieldEnum: {
+    id: 'id',
+    gstin: 'gstin',
+    period: 'period',
+    form: 'form',
+    status: 'status',
+    filingDate: 'filingDate',
+    provider: 'provider',
+    raw: 'raw',
+    fetchedAt: 'fetchedAt'
+  };
+
+  export type GstReturnStatusScalarFieldEnum = (typeof GstReturnStatusScalarFieldEnum)[keyof typeof GstReturnStatusScalarFieldEnum]
 
 
   export const SortOrder: {
@@ -35697,6 +36846,79 @@ export namespace Prisma {
     meta?: JsonNullableWithAggregatesFilter<"ScheduledReminder">
   }
 
+  export type GstReturnStatusWhereInput = {
+    AND?: GstReturnStatusWhereInput | GstReturnStatusWhereInput[]
+    OR?: GstReturnStatusWhereInput[]
+    NOT?: GstReturnStatusWhereInput | GstReturnStatusWhereInput[]
+    id?: StringFilter<"GstReturnStatus"> | string
+    gstin?: StringFilter<"GstReturnStatus"> | string
+    period?: StringFilter<"GstReturnStatus"> | string
+    form?: StringFilter<"GstReturnStatus"> | string
+    status?: StringFilter<"GstReturnStatus"> | string
+    filingDate?: DateTimeNullableFilter<"GstReturnStatus"> | Date | string | null
+    provider?: StringFilter<"GstReturnStatus"> | string
+    raw?: JsonNullableFilter<"GstReturnStatus">
+    fetchedAt?: DateTimeFilter<"GstReturnStatus"> | Date | string
+  }
+
+  export type GstReturnStatusOrderByWithRelationInput = {
+    id?: SortOrder
+    gstin?: SortOrder
+    period?: SortOrder
+    form?: SortOrder
+    status?: SortOrder
+    filingDate?: SortOrderInput | SortOrder
+    provider?: SortOrder
+    raw?: SortOrderInput | SortOrder
+    fetchedAt?: SortOrder
+  }
+
+  export type GstReturnStatusWhereUniqueInput = Prisma.AtLeast<{
+    id?: string
+    gstin_period_form?: GstReturnStatusGstinPeriodFormCompoundUniqueInput
+    AND?: GstReturnStatusWhereInput | GstReturnStatusWhereInput[]
+    OR?: GstReturnStatusWhereInput[]
+    NOT?: GstReturnStatusWhereInput | GstReturnStatusWhereInput[]
+    gstin?: StringFilter<"GstReturnStatus"> | string
+    period?: StringFilter<"GstReturnStatus"> | string
+    form?: StringFilter<"GstReturnStatus"> | string
+    status?: StringFilter<"GstReturnStatus"> | string
+    filingDate?: DateTimeNullableFilter<"GstReturnStatus"> | Date | string | null
+    provider?: StringFilter<"GstReturnStatus"> | string
+    raw?: JsonNullableFilter<"GstReturnStatus">
+    fetchedAt?: DateTimeFilter<"GstReturnStatus"> | Date | string
+  }, "id" | "gstin_period_form">
+
+  export type GstReturnStatusOrderByWithAggregationInput = {
+    id?: SortOrder
+    gstin?: SortOrder
+    period?: SortOrder
+    form?: SortOrder
+    status?: SortOrder
+    filingDate?: SortOrderInput | SortOrder
+    provider?: SortOrder
+    raw?: SortOrderInput | SortOrder
+    fetchedAt?: SortOrder
+    _count?: GstReturnStatusCountOrderByAggregateInput
+    _max?: GstReturnStatusMaxOrderByAggregateInput
+    _min?: GstReturnStatusMinOrderByAggregateInput
+  }
+
+  export type GstReturnStatusScalarWhereWithAggregatesInput = {
+    AND?: GstReturnStatusScalarWhereWithAggregatesInput | GstReturnStatusScalarWhereWithAggregatesInput[]
+    OR?: GstReturnStatusScalarWhereWithAggregatesInput[]
+    NOT?: GstReturnStatusScalarWhereWithAggregatesInput | GstReturnStatusScalarWhereWithAggregatesInput[]
+    id?: StringWithAggregatesFilter<"GstReturnStatus"> | string
+    gstin?: StringWithAggregatesFilter<"GstReturnStatus"> | string
+    period?: StringWithAggregatesFilter<"GstReturnStatus"> | string
+    form?: StringWithAggregatesFilter<"GstReturnStatus"> | string
+    status?: StringWithAggregatesFilter<"GstReturnStatus"> | string
+    filingDate?: DateTimeNullableWithAggregatesFilter<"GstReturnStatus"> | Date | string | null
+    provider?: StringWithAggregatesFilter<"GstReturnStatus"> | string
+    raw?: JsonNullableWithAggregatesFilter<"GstReturnStatus">
+    fetchedAt?: DateTimeWithAggregatesFilter<"GstReturnStatus"> | Date | string
+  }
+
   export type ClientCreateInput = {
     id?: string
     name: string
@@ -37920,6 +39142,90 @@ export namespace Prisma {
     meta?: NullableJsonNullValueInput | InputJsonValue
   }
 
+  export type GstReturnStatusCreateInput = {
+    id?: string
+    gstin: string
+    period: string
+    form: string
+    status: string
+    filingDate?: Date | string | null
+    provider: string
+    raw?: NullableJsonNullValueInput | InputJsonValue
+    fetchedAt?: Date | string
+  }
+
+  export type GstReturnStatusUncheckedCreateInput = {
+    id?: string
+    gstin: string
+    period: string
+    form: string
+    status: string
+    filingDate?: Date | string | null
+    provider: string
+    raw?: NullableJsonNullValueInput | InputJsonValue
+    fetchedAt?: Date | string
+  }
+
+  export type GstReturnStatusUpdateInput = {
+    id?: StringFieldUpdateOperationsInput | string
+    gstin?: StringFieldUpdateOperationsInput | string
+    period?: StringFieldUpdateOperationsInput | string
+    form?: StringFieldUpdateOperationsInput | string
+    status?: StringFieldUpdateOperationsInput | string
+    filingDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    provider?: StringFieldUpdateOperationsInput | string
+    raw?: NullableJsonNullValueInput | InputJsonValue
+    fetchedAt?: DateTimeFieldUpdateOperationsInput | Date | string
+  }
+
+  export type GstReturnStatusUncheckedUpdateInput = {
+    id?: StringFieldUpdateOperationsInput | string
+    gstin?: StringFieldUpdateOperationsInput | string
+    period?: StringFieldUpdateOperationsInput | string
+    form?: StringFieldUpdateOperationsInput | string
+    status?: StringFieldUpdateOperationsInput | string
+    filingDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    provider?: StringFieldUpdateOperationsInput | string
+    raw?: NullableJsonNullValueInput | InputJsonValue
+    fetchedAt?: DateTimeFieldUpdateOperationsInput | Date | string
+  }
+
+  export type GstReturnStatusCreateManyInput = {
+    id?: string
+    gstin: string
+    period: string
+    form: string
+    status: string
+    filingDate?: Date | string | null
+    provider: string
+    raw?: NullableJsonNullValueInput | InputJsonValue
+    fetchedAt?: Date | string
+  }
+
+  export type GstReturnStatusUpdateManyMutationInput = {
+    id?: StringFieldUpdateOperationsInput | string
+    gstin?: StringFieldUpdateOperationsInput | string
+    period?: StringFieldUpdateOperationsInput | string
+    form?: StringFieldUpdateOperationsInput | string
+    status?: StringFieldUpdateOperationsInput | string
+    filingDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    provider?: StringFieldUpdateOperationsInput | string
+    raw?: NullableJsonNullValueInput | InputJsonValue
+    fetchedAt?: DateTimeFieldUpdateOperationsInput | Date | string
+  }
+
+  export type GstReturnStatusUncheckedUpdateManyInput = {
+    id?: StringFieldUpdateOperationsInput | string
+    gstin?: StringFieldUpdateOperationsInput | string
+    period?: StringFieldUpdateOperationsInput | string
+    form?: StringFieldUpdateOperationsInput | string
+    status?: StringFieldUpdateOperationsInput | string
+    filingDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    provider?: StringFieldUpdateOperationsInput | string
+    raw?: NullableJsonNullValueInput | InputJsonValue
+    fetchedAt?: DateTimeFieldUpdateOperationsInput | Date | string
+  }
+
   export type StringFilter<$PrismaModel = never> = {
     equals?: string | StringFieldRefInput<$PrismaModel>
     in?: string[] | ListStringFieldRefInput<$PrismaModel>
@@ -39653,6 +40959,46 @@ export namespace Prisma {
     _count?: NestedIntFilter<$PrismaModel>
     _min?: NestedEnumReminderStatusFilter<$PrismaModel>
     _max?: NestedEnumReminderStatusFilter<$PrismaModel>
+  }
+
+  export type GstReturnStatusGstinPeriodFormCompoundUniqueInput = {
+    gstin: string
+    period: string
+    form: string
+  }
+
+  export type GstReturnStatusCountOrderByAggregateInput = {
+    id?: SortOrder
+    gstin?: SortOrder
+    period?: SortOrder
+    form?: SortOrder
+    status?: SortOrder
+    filingDate?: SortOrder
+    provider?: SortOrder
+    raw?: SortOrder
+    fetchedAt?: SortOrder
+  }
+
+  export type GstReturnStatusMaxOrderByAggregateInput = {
+    id?: SortOrder
+    gstin?: SortOrder
+    period?: SortOrder
+    form?: SortOrder
+    status?: SortOrder
+    filingDate?: SortOrder
+    provider?: SortOrder
+    fetchedAt?: SortOrder
+  }
+
+  export type GstReturnStatusMinOrderByAggregateInput = {
+    id?: SortOrder
+    gstin?: SortOrder
+    period?: SortOrder
+    form?: SortOrder
+    status?: SortOrder
+    filingDate?: SortOrder
+    provider?: SortOrder
+    fetchedAt?: SortOrder
   }
 
   export type StringFieldUpdateOperationsInput = {

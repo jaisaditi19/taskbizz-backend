@@ -572,3 +572,18 @@ enum ReminderStatus {
   FAILED
   CANCELLED
 }
+
+model GstReturnStatus {
+  id         String   @id @default(cuid())
+  gstin      String   @db.VarChar(15)
+  period     String   // "YYYY-MM"
+  form       String   // "GSTR1" | "GSTR3B"
+  status     String   // "FILED" | "NOT_FILED" | ...
+  filingDate DateTime?
+  provider   String
+  raw        Json?
+  fetchedAt  DateTime @default(now())
+
+  @@unique([gstin, period, form])
+  @@index([gstin, period])
+}

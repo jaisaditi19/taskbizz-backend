@@ -2,6 +2,11 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const gstController_1 = require("../controllers/gstController");
+const auth_1 = require("../middlewares/auth");
+const orgMiddleware_1 = require("../middlewares/orgMiddleware");
 const router = (0, express_1.Router)();
 router.get("/gst/gstin/:gstin", gstController_1.getGstinDetails);
+router.use(auth_1.authenticate, orgMiddleware_1.orgMiddleware);
+router.post("/gst/returns/fetch", gstController_1.fetchReturnStatus);
+router.get("/gst/returns/:gstin", gstController_1.getGstReturnStatus);
 exports.default = router;

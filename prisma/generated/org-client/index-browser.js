@@ -429,6 +429,18 @@ exports.Prisma.ScheduledReminderScalarFieldEnum = {
   meta: 'meta'
 };
 
+exports.Prisma.GstReturnStatusScalarFieldEnum = {
+  id: 'id',
+  gstin: 'gstin',
+  period: 'period',
+  form: 'form',
+  status: 'status',
+  filingDate: 'filingDate',
+  provider: 'provider',
+  raw: 'raw',
+  fetchedAt: 'fetchedAt'
+};
+
 exports.Prisma.SortOrder = {
   asc: 'asc',
   desc: 'desc'
@@ -562,7 +574,8 @@ exports.Prisma.ModelName = {
   LicenseAssignee: 'LicenseAssignee',
   LicenseHistory: 'LicenseHistory',
   LicenseAttachment: 'LicenseAttachment',
-  ScheduledReminder: 'ScheduledReminder'
+  ScheduledReminder: 'ScheduledReminder',
+  GstReturnStatus: 'GstReturnStatus'
 };
 
 /**

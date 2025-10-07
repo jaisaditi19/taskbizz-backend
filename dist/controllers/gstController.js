@@ -1,8 +1,18 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getGstinDetails = void 0;
+exports.getGstReturnStatus = exports.fetchReturnStatus = exports.getGstinDetails = void 0;
 const gstin_1 = require("../utils/gstin");
+const container_1 = require("../di/container");
 const gstinService_1 = require("../services/gstinService");
+async function resolveOrgPrisma(req) {
+    const maybe = req.orgPrisma;
+    if (maybe)
+        return maybe;
+    const orgId = req.user?.orgId;
+    if (!orgId)
+        throw new Error("Org ID required");
+    return await (0, container_1.getOrgPrisma)(orgId);
+}
 const getGstinDetails = async (req, res) => {
     try {
         const gstinRaw = String(req.params.gstin || "")
@@ -15,7 +25,6 @@ const getGstinDetails = async (req, res) => {
             return res.status(500).json({ message: "GST lookup key not configured" });
         }
         const data = await (0, gstinService_1.fetchGstinDetailsViaJamku)(gstinRaw);
-        // Normalize for your UI fields
         const payload = {
             gstin: data.gstin,
             legalName: data.legalName ?? data.tradeName ?? null,
@@ -38,3 +47,163 @@ const getGstinDetails = async (req, res) => {
     }
 };
 exports.getGstinDetails = getGstinDetails;
+const fetchReturnStatus = async (req, res) => {
+    try {
+        const { gstin, form, period, forms, periods } = req.body ?? {};
+        if (!gstin || !(0, gstin_1.isValidGSTIN)(String(gstin))) {
+            return res.status(400).json({ message: "Valid gstin required" });
+        }
+        const prisma = await resolveOrgPrisma(req);
+        if (!prisma)
+            return res.status(500).json({ message: "Org DB not resolved" });
+        // targets to upsert
+        const targets = [];
+        if (form && period) {
+            targets.push({ form, period });
+        }
+        else if (Array.isArray(forms) &&
+            Array.isArray(periods) &&
+            periods.length) {
+            for (const p of periods)
+                for (const f of forms)
+                    targets.push({ form: f, period: p });
+        }
+        else {
+            return res
+                .status(400)
+                .json({ message: "Provide form+period or forms[]+periods[]" });
+        }
+        // aggregate → FILED rows
+        const raw = await (0, gstinService_1.fetchGstinAggregateRawViaJamku)(String(gstin).toUpperCase());
+        const normalized = (0, gstinService_1.rowsFromAggregateReturnList)(gstin, raw);
+        const filedIndex = new Map();
+        for (const r of normalized) {
+            filedIndex.set(`${r.period}|${r.form}`, {
+                filingDate: r.filingDate ?? null,
+            });
+        }
+        const results = [];
+        for (const t of targets) {
+            const { status, filingDate } = (0, gstinService_1.deriveStatusFor)(t.period, t.form, filedIndex);
+            await prisma.gstReturnStatus.upsert({
+                where: { gstin_period_form: { gstin, period: t.period, form: t.form } },
+                create: {
+                    gstin,
+                    period: t.period,
+                    form: t.form,
+                    status, // FILED | DUE | OVERDUE | NOT_DUE_YET
+                    filingDate,
+                    provider: "jamku-rapidapi",
+                    raw: filedIndex.get(`${t.period}|${t.form}`) ?? { derived: true },
+                },
+                update: {
+                    status,
+                    filingDate,
+                    provider: "jamku-rapidapi",
+                    raw: filedIndex.get(`${t.period}|${t.form}`) ?? { derived: true },
+                    fetchedAt: new Date(),
+                },
+            });
+            results.push({ ...t, ok: true, via: "aggregate", status });
+        }
+        return res.json({ ok: true, results });
+    }
+    catch (e) {
+        console.error("fetchReturnStatus error", e?.response?.data || e);
+        return res.status(500).json({ message: e?.message ?? "fetch failed" });
+    }
+};
+exports.fetchReturnStatus = fetchReturnStatus;
+/**
+ * GET /integrations/gst/returns/:gstin?from=YYYY-MM&to=YYYY-MM
+ * Returns cached rows; also fills gaps using derived status.
+ */
+const getGstReturnStatus = async (req, res) => {
+    try {
+        const gstin = String(req.params.gstin || "")
+            .toUpperCase()
+            .trim();
+        if (!(0, gstin_1.isValidGSTIN)(gstin)) {
+            return res.status(400).json({ message: "Invalid GSTIN format" });
+        }
+        const prisma = await resolveOrgPrisma(req);
+        const { from, to } = req.query;
+        const where = { gstin };
+        if (from && to)
+            where.period = { gte: from, lte: to };
+        const rows = await prisma.gstReturnStatus.findMany({
+            where,
+            orderBy: [{ period: "asc" }, { form: "asc" }],
+            select: {
+                id: true,
+                gstin: true,
+                period: true,
+                form: true,
+                status: true,
+                filingDate: true,
+                provider: true,
+                raw: true,
+            },
+        });
+        // Build month range if asked
+        const months = [];
+        if (from && to) {
+            let [y, m] = from.split("-").map(Number);
+            const [ty, tm] = to.split("-").map(Number);
+            while (y < ty || (y === ty && m <= tm)) {
+                months.push(`${y}-${String(m).padStart(2, "0")}`);
+                m++;
+                if (m > 12) {
+                    m = 1;
+                    y++;
+                }
+            }
+        }
+        // Index existing rows & index FILED for derivation
+        const byKey = new Map(rows.map((r) => [`${r.period}|${r.form}`, r]));
+        const filedIndex = new Map();
+        for (const r of rows) {
+            if (r.status === "FILED") {
+                filedIndex.set(`${r.period}|${r.form}`, {
+                    filingDate: r.filingDate ?? null,
+                });
+            }
+        }
+        // Synthesize gaps with derived status
+        const formsWanted = ["GSTR1", "GSTR3B"];
+        const synthesized = [];
+        if (months.length) {
+            for (const p of months) {
+                for (const f of formsWanted) {
+                    const k = `${p}|${f}`;
+                    if (!byKey.has(k)) {
+                        const { status, filingDate } = (0, gstinService_1.deriveStatusFor)(p, f, filedIndex);
+                        synthesized.push({
+                            id: undefined,
+                            gstin,
+                            period: p,
+                            form: f,
+                            status, // DUE | OVERDUE | NOT_DUE_YET (since not filed)
+                            filingDate,
+                            provider: "synthetic",
+                            raw: null,
+                        });
+                    }
+                }
+            }
+        }
+        const items = [...rows, ...synthesized].sort((a, b) => a.period < b.period
+            ? 1
+            : a.period > b.period
+                ? -1
+                : a.form.localeCompare(b.form));
+        console.log({ gstin, items });
+        return res.json({ gstin, items });
+    }
+    catch (e) {
+        return res
+            .status(500)
+            .json({ message: e?.message ?? "Failed to read statuses" });
+    }
+};
+exports.getGstReturnStatus = getGstReturnStatus;
