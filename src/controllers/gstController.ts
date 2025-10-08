@@ -231,3 +231,44 @@ export const getGstReturnStatus = async (req: Request, res: Response) => {
       .json({ message: e?.message ?? "Failed to read statuses" });
   }
 };
+
+// POST /integrations/gst/returns/latest:batch
+// body: { gstins: string[] }
+export const getLatestBatch = async (req: Request, res: Response) => {
+  try {
+    const raw = (req.body?.gstins ?? []) as string[];
+    const gstins = raw
+      .map((g) => String(g || "").toUpperCase().trim())
+      .filter(isValidGSTIN);
+    if (!gstins.length) {
+      return res.status(400).json({ message: "Provide gstins[]" });
+    }
+
+    const prisma = await resolveOrgPrisma(req);
+
+    const rows = await prisma.gstReturnStatus.findMany({
+      where: {
+        gstin: { in: gstins },
+        status: { in: ["FILED", "NIL"] },
+      },
+      select: { gstin: true, period: true, form: true },
+    });
+
+    // Reduce to latest per (gstin, form)
+    const latestMap = new Map<string, { GSTR1?: string; GSTR3B?: string }>();
+    for (const g of gstins) latestMap.set(g, {});
+    for (const r of rows) {
+      const entry = latestMap.get(r.gstin)!;
+      if (r.form === "GSTR1") {
+        if (!entry.GSTR1 || r.period > entry.GSTR1) entry.GSTR1 = r.period;
+      } else if (r.form === "GSTR3B") {
+        if (!entry.GSTR3B || r.period > entry.GSTR3B) entry.GSTR3B = r.period;
+      }
+    }
+
+    return res.json({ latestByGstin: Object.fromEntries(latestMap) });
+  } catch (e: any) {
+    console.error("getLatestBatch error", e?.response?.data || e);
+    return res.status(500).json({ message: e?.message ?? "Batch failed" });
+  }
+};

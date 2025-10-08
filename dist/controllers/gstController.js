@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getGstReturnStatus = exports.fetchReturnStatus = exports.getGstinDetails = void 0;
+exports.getLatestBatch = exports.getGstReturnStatus = exports.fetchReturnStatus = exports.getGstinDetails = void 0;
 const gstin_1 = require("../utils/gstin");
 const container_1 = require("../di/container");
 const gstinService_1 = require("../services/gstinService");
@@ -207,3 +207,45 @@ const getGstReturnStatus = async (req, res) => {
     }
 };
 exports.getGstReturnStatus = getGstReturnStatus;
+// POST /integrations/gst/returns/latest:batch
+// body: { gstins: string[] }
+const getLatestBatch = async (req, res) => {
+    try {
+        const raw = (req.body?.gstins ?? []);
+        const gstins = raw
+            .map((g) => String(g || "").toUpperCase().trim())
+            .filter(gstin_1.isValidGSTIN);
+        if (!gstins.length) {
+            return res.status(400).json({ message: "Provide gstins[]" });
+        }
+        const prisma = await resolveOrgPrisma(req);
+        const rows = await prisma.gstReturnStatus.findMany({
+            where: {
+                gstin: { in: gstins },
+                status: { in: ["FILED", "NIL"] },
+            },
+            select: { gstin: true, period: true, form: true },
+        });
+        // Reduce to latest per (gstin, form)
+        const latestMap = new Map();
+        for (const g of gstins)
+            latestMap.set(g, {});
+        for (const r of rows) {
+            const entry = latestMap.get(r.gstin);
+            if (r.form === "GSTR1") {
+                if (!entry.GSTR1 || r.period > entry.GSTR1)
+                    entry.GSTR1 = r.period;
+            }
+            else if (r.form === "GSTR3B") {
+                if (!entry.GSTR3B || r.period > entry.GSTR3B)
+                    entry.GSTR3B = r.period;
+            }
+        }
+        return res.json({ latestByGstin: Object.fromEntries(latestMap) });
+    }
+    catch (e) {
+        console.error("getLatestBatch error", e?.response?.data || e);
+        return res.status(500).json({ message: e?.message ?? "Batch failed" });
+    }
+};
+exports.getLatestBatch = getLatestBatch;

@@ -9,4 +9,5 @@ router.get("/gst/gstin/:gstin", gstController_1.getGstinDetails);
 router.use(auth_1.authenticate, orgMiddleware_1.orgMiddleware);
 router.post("/gst/returns/fetch", gstController_1.fetchReturnStatus);
 router.get("/gst/returns/:gstin", gstController_1.getGstReturnStatus);
+router.post("/gst/returns/latest:batch", gstController_1.getLatestBatch);
 exports.default = router;
