@@ -725,6 +725,61 @@ exports.bulkDeleteLicenses = bulkDeleteLicenses;
 //   url?: string|null
 //   remindOffsets?: number[] // negative days; if positive provided, we normalize
 // }> }
+// controllers/licenseController.ts (or wherever your bulk import lives)
+// import { Request, Response } from "express";
+// --- tiny, local helpers (no other imports needed) ---
+/** Accepts Date | string ("YYYY-MM-DD" or ISO) | null/undefined; returns Date | null */
+function parseDateLike(input) {
+    if (!input)
+        return null;
+    if (input instanceof Date && !isNaN(input.getTime()))
+        return input;
+    if (typeof input === "string") {
+        const s = input.trim();
+        // Strict date-only: YYYY-MM-DD
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+        if (m) {
+            const y = Number(m[1]);
+            const mo = Number(m[2]) - 1; // 0-based
+            const d = Number(m[3]);
+            const dt = new Date(Date.UTC(y, mo, d, 0, 0, 0, 0));
+            return isNaN(dt.getTime()) ? null : dt;
+        }
+        // Otherwise try generic parse (ISO or other)
+        const dt = new Date(s);
+        return isNaN(dt.getTime()) ? null : dt;
+    }
+    return null;
+}
+/** Clamp a Date to UTC midnight */
+function toUtcMidnight(d) {
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+}
+/** Throw if required date is missing/invalid; else return normalized Date or null */
+function ensureDateOrThrow(input, fieldName, { required }) {
+    const parsed = parseDateLike(input);
+    if (!parsed) {
+        if (required)
+            throw new Error(`Valid ${fieldName} is required`);
+        return null;
+    }
+    return toUtcMidnight(parsed);
+}
+// If you already have pickLicenseBody elsewhere and trust it, you can keep using it.
+// Below we normalize explicitly and don't rely on external pickers to avoid type drift.
+/**
+ * POST /licenses/bulk/import
+ * Body: { items: Array<{
+ *   title: string
+ *   licenseNumber?: string|null
+ *   clientId?: string|null
+ *   issuedOn?: string|Date|null   // "YYYY-MM-DD" ok
+ *   expiresOn: string|Date        // "YYYY-MM-DD" ok (required)
+ *   url?: string|null
+ *   remindOffsets?: number[]      // positive allowed; we normalize to negatives
+ *   responsibleId?: string|null   // omit to leave as-is, null to clear
+ * }> }
+ */
 const bulkImportLicenses = async (req, res) => {
     try {
         if (!canCreate(req))
@@ -734,59 +789,76 @@ const bulkImportLicenses = async (req, res) => {
         if (!rawItems || rawItems.length === 0) {
             return res.status(400).json({ message: "items[] required" });
         }
-        // normalize to internal creator body using your existing picker + normalizer
-        const normalizeRow = (row) => {
-            // allow positive-day input; normalize to negatives (and whitelist)
-            const offs = Array.isArray(row.remindOffsets) ? row.remindOffsets : undefined;
-            const normalizedOffsets = Array.isArray(offs)
-                ? normalizeOffsets(offs) // uses toApiOffsets/fromApiOffsets internally
-                : undefined;
-            // reuse your existing single-row validator/normalizer
-            const body = pickLicenseBody({
-                title: row.title,
-                licenseNumber: row.licenseNumber ?? null,
-                clientId: row.clientId ?? null,
-                issuedOn: row.issuedOn ?? null,
-                expiresOn: row.expiresOn,
-                url: row.url ?? null,
-                remindOffsets: normalizedOffsets,
-                responsibleId: row.responsibleId === undefined
-                    ? undefined
-                    : (row.responsibleId === null
-                        ? null
-                        : String(row.responsibleId).trim() || null),
-            });
-            return body;
-        };
         const results = [];
-        // chunk to keep transactions & parameter counts reasonable
-        const chunk = (arr, n = 50) => {
-            const out = [];
-            for (let i = 0; i < arr.length; i += n)
-                out.push(arr.slice(i, i + n));
-            return out;
-        };
         let createdTotal = 0;
-        for (const part of chunk(rawItems, 50)) {
+        // Process in chunks of 50
+        const chunkSize = 50;
+        for (let i = 0; i < rawItems.length; i += chunkSize) {
+            const chunk = rawItems.slice(i, i + chunkSize);
             await orgPrisma.$transaction(async (tx) => {
-                for (let i = 0; i < part.length; i++) {
-                    const idx = rawItems.indexOf(part[i]); // original index for reporting
+                for (let j = 0; j < chunk.length; j++) {
+                    const row = chunk[j];
+                    const idx = i + j;
                     try {
-                        const body = normalizeRow(part[i]);
+                        // Validate title
+                        const title = String(row?.title ?? "").trim();
+                        if (!title) {
+                            throw new Error("Title is required");
+                        }
+                        // Validate and parse expiresOn (required)
+                        const expiresOnRaw = row?.expiresOn;
+                        if (!expiresOnRaw) {
+                            throw new Error("expiresOn is required");
+                        }
+                        const expiresOn = new Date(expiresOnRaw);
+                        if (isNaN(expiresOn.getTime())) {
+                            throw new Error("Invalid expiresOn date");
+                        }
+                        // Parse issuedOn (optional)
+                        let issuedOn = null;
+                        if (row?.issuedOn) {
+                            const parsed = new Date(row.issuedOn);
+                            if (!isNaN(parsed.getTime())) {
+                                issuedOn = parsed;
+                            }
+                        }
+                        // Normalize other fields
+                        const licenseNumber = row?.licenseNumber
+                            ? String(row.licenseNumber).trim()
+                            : null;
+                        const clientId = row?.clientId ? String(row.clientId).trim() : null;
+                        const url = row?.url ? String(row.url).trim() : null;
+                        // Parse remindOffsets (positive days from UI -> negative for backend)
+                        let remindOffsets = [-7, -1]; // default
+                        if (Array.isArray(row?.remindOffsets) &&
+                            row.remindOffsets.length > 0) {
+                            remindOffsets = row.remindOffsets
+                                .map((n) => Number(n))
+                                .filter((n) => Number.isFinite(n) && n !== 0)
+                                .map((n) => -Math.abs(n)) // ensure negative
+                                .sort((a, b) => a - b);
+                            // Remove duplicates
+                            remindOffsets = Array.from(new Set(remindOffsets));
+                        }
+                        const responsibleId = row?.responsibleId
+                            ? String(row.responsibleId).trim()
+                            : null;
+                        // Create license
                         const created = await tx.license.create({
                             data: {
-                                title: body.title,
-                                licenseNumber: body.licenseNumber ?? null,
-                                clientId: body.clientId ?? null,
-                                issuedOn: body.issuedOn,
-                                expiresOn: body.expiresOn,
-                                url: body.url ?? null,
-                                remindOffsets: body.remindOffsets ?? [-7, -1],
-                                responsibleId: body.responsibleId === undefined ? null : body.responsibleId,
+                                title,
+                                licenseNumber,
+                                clientId,
+                                issuedOn,
+                                expiresOn,
+                                url,
+                                remindOffsets,
+                                responsibleId,
                                 createdById: req.user?.id ?? "system",
                             },
                             select: { id: true, expiresOn: true, remindOffsets: true },
                         });
+                        // Rebuild reminders
                         await rebuildReminders({
                             tx,
                             licenseId: created.id,
@@ -797,6 +869,7 @@ const bulkImportLicenses = async (req, res) => {
                         createdTotal++;
                     }
                     catch (e) {
+                        console.error(`Row ${idx} failed:`, e);
                         results.push({
                             index: idx,
                             ok: false,
@@ -810,13 +883,16 @@ const bulkImportLicenses = async (req, res) => {
         return res.json({
             ok: failed.length === 0,
             created: createdTotal,
-            failed,
+            failed: failed.length > 0 ? failed : undefined,
+            results,
         });
     }
     catch (err) {
-        return res
-            .status(500)
-            .json({ message: "Bulk import failed", err: String(err?.message ?? err) });
+        console.error("Bulk import error:", err);
+        return res.status(500).json({
+            message: "Bulk import failed",
+            err: String(err?.message ?? err),
+        });
     }
 };
 exports.bulkImportLicenses = bulkImportLicenses;
