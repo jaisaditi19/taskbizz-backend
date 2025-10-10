@@ -11,6 +11,7 @@ const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const redisClient_1 = __importDefault(require("../config/redisClient"));
 const tenantUtils_1 = require("../utils/tenantUtils");
 const coreClient_1 = require("../prisma/coreClient");
+const SOCKET_PATH = process.env.SOCKET_PATH || "/socket.io";
 async function isBlacklisted(token) {
     return (await redisClient_1.default.get(`blacklist_${token}`)) === "true";
 }
@@ -20,9 +21,8 @@ function attachSocket(server) {
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
-    // when creating io
     const io = new socket_io_1.Server(server, {
-        path: "/api/socket.io", // ✅ add this
+        path: SOCKET_PATH,
         cors: {
             origin: allowed.length ? allowed : "*",
             credentials: true,

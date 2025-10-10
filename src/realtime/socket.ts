@@ -13,6 +13,8 @@ type JwtPayload = {
   exp: number;
 };
 
+const SOCKET_PATH = process.env.SOCKET_PATH || "/socket.io";
+
 async function isBlacklisted(token: string) {
   return (await redisClient.get(`blacklist_${token}`)) === "true";
 }
@@ -26,9 +28,8 @@ export function attachSocket(server: http.Server) {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  // when creating io
   const io = new Server(server, {
-    path: "/api/socket.io", // ✅ add this
+    path: SOCKET_PATH,
     cors: {
       origin: allowed.length ? allowed : "*",
       credentials: true,
