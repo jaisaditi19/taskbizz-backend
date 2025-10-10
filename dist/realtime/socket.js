@@ -11,7 +11,7 @@ const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const redisClient_1 = __importDefault(require("../config/redisClient"));
 const tenantUtils_1 = require("../utils/tenantUtils");
 const coreClient_1 = require("../prisma/coreClient");
-const SOCKET_PATH = process.env.SOCKET_PATH || "/taskbizz-backend2/socket.io";
+const SOCKET_PATH = process.env.SOCKET_PATH || "/socket.io";
 async function isBlacklisted(token) {
     return (await redisClient_1.default.get(`blacklist_${token}`)) === "true";
 }

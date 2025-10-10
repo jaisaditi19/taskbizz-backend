@@ -13,7 +13,7 @@ type JwtPayload = {
   exp: number;
 };
 
-const SOCKET_PATH = process.env.SOCKET_PATH || "/taskbizz-backend2/socket.io"; 
+const SOCKET_PATH = process.env.SOCKET_PATH || "/socket.io"; 
 
 async function isBlacklisted(token: string) {
   return (await redisClient.get(`blacklist_${token}`)) === "true";
