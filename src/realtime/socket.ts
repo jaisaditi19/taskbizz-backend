@@ -4,7 +4,7 @@ import { Server } from "socket.io";
 import jwt from "jsonwebtoken";
 import redisClient from "../config/redisClient";
 import { getOrgPrismaClient } from "../utils/tenantUtils";
-import { prisma as corePrisma} from "../prisma/coreClient";
+import { prisma as corePrisma } from "../prisma/coreClient";
 
 type JwtPayload = {
   id: string;
@@ -13,20 +13,20 @@ type JwtPayload = {
   exp: number;
 };
 
-const SOCKET_PATH = process.env.SOCKET_PATH || "/socket.io"; 
-
 async function isBlacklisted(token: string) {
   return (await redisClient.get(`blacklist_${token}`)) === "true";
 }
 
 export function attachSocket(server: http.Server) {
-  const allowed = (process.env.WEB_ORIGIN ?? "https://portal.taskbizz.com,http://localhost:5173")
+  const allowed = (
+    process.env.WEB_ORIGIN ??
+    "https://portal.taskbizz.com,http://localhost:5173"
+  )
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
 
   const io = new Server(server, {
-    path: SOCKET_PATH,
     cors: {
       origin: allowed.length ? allowed : "*",
       credentials: true,
@@ -79,11 +79,10 @@ export function attachSocket(server: http.Server) {
     }
   });
 
-
   // ─────────────── Socket events ───────────────
   io.on("connection", (socket) => {
     const user = (socket.data as any).user as JwtPayload | undefined;
-    
+
     // Join/leave
     socket.on("chat:join", (payload: any) => {
       const ids: unknown = payload?.conversationIds;

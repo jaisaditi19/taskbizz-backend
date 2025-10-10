@@ -11,17 +11,16 @@ const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const redisClient_1 = __importDefault(require("../config/redisClient"));
 const tenantUtils_1 = require("../utils/tenantUtils");
 const coreClient_1 = require("../prisma/coreClient");
-const SOCKET_PATH = process.env.SOCKET_PATH || "/socket.io";
 async function isBlacklisted(token) {
     return (await redisClient_1.default.get(`blacklist_${token}`)) === "true";
 }
 function attachSocket(server) {
-    const allowed = (process.env.WEB_ORIGIN ?? "https://portal.taskbizz.com,http://localhost:5173")
+    const allowed = (process.env.WEB_ORIGIN ??
+        "https://portal.taskbizz.com,http://localhost:5173")
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
     const io = new socket_io_1.Server(server, {
-        path: SOCKET_PATH,
         cors: {
             origin: allowed.length ? allowed : "*",
             credentials: true,
