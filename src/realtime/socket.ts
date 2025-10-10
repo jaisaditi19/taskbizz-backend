@@ -26,7 +26,9 @@ export function attachSocket(server: http.Server) {
     .map((s) => s.trim())
     .filter(Boolean);
 
+  // when creating io
   const io = new Server(server, {
+    path: "/api/socket.io", // ✅ add this
     cors: {
       origin: allowed.length ? allowed : "*",
       credentials: true,

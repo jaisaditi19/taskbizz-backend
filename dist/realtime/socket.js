@@ -20,7 +20,9 @@ function attachSocket(server) {
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
+    // when creating io
     const io = new socket_io_1.Server(server, {
+        path: "/api/socket.io", // ✅ add this
         cors: {
             origin: allowed.length ? allowed : "*",
             credentials: true,
