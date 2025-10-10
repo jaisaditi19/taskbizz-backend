@@ -197,7 +197,6 @@ const getGstReturnStatus = async (req, res) => {
             : a.period > b.period
                 ? -1
                 : a.form.localeCompare(b.form));
-        console.log({ gstin, items });
         return res.json({ gstin, items });
     }
     catch (e) {

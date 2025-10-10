@@ -31,6 +31,7 @@ import pincodeRoute from "./routes/pincode";
 import leaveRoutes from "./routes/leave";
 import licenseRoutes from "./routes/license";
 import integrationsRouter from "./routes/integrations";
+import uploadRoutes from "./routes/uploadRoutes";
 
 // Jobs / other middlewares
 import "./jobs/cleanup";
@@ -161,6 +162,7 @@ app.use("/api/chat", chatRoutes);
 app.use("/api/leaves", leaveRoutes);
 app.use("/api/licenses", licenseRoutes);
 app.use("/api/integrations", integrationsRouter);
+app.use("/api/uploads", uploadRoutes);
 
 // ---------- Start server & graceful shutdown ----------
 const PORT = process.env.PORT || 8080;

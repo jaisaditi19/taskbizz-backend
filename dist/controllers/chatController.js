@@ -213,38 +213,40 @@ async function ensureMember(prisma, conversationId, userId) {
 // GET /chat/conversations/:id/messages?before=ISO&limit=50
 const listMessages = async (req, res) => {
     try {
-        const { id: userId, orgId } = req.user ?? {};
+        const { id: userId } = req.user ?? {};
         const prisma = await resolveOrgPrisma(req);
         const conversationId = req.params.id;
         await ensureMember(prisma, conversationId, userId);
         const limit = Math.min(Number(req.query.limit ?? 50), 100);
         const beforeRaw = typeof req.query.before === "string" ? req.query.before : undefined;
         const before = beforeRaw ? new Date(beforeRaw) : undefined;
-        const messages = await prisma.message.findMany({
+        // ⚡ Fetch newest-first for efficiency
+        const raw = await prisma.message.findMany({
             where: {
                 conversationId,
                 createdAt: before ? { lt: before } : undefined,
             },
             orderBy: { createdAt: "desc" },
-            take: limit,
+            take: limit + 1, // overfetch 1 to detect hasMore
             include: {
                 reads: true,
                 sender: {
-                    select: {
-                        userId: true,
-                        name: true,
-                        avatarUrl: true,
-                    },
+                    select: { userId: true, name: true, avatarUrl: true },
                 },
             },
         });
-        res.json({ messages });
+        const hasMore = raw.length > limit;
+        const page = hasMore ? raw.slice(0, limit) : raw;
+        // 🔁 Reverse so messages are oldest → newest (chronological)
+        const messages = page.reverse();
+        // 🧭 Provide pagination cursor (for load older)
+        const nextBefore = messages.length > 0 ? messages[0].createdAt.toISOString() : null;
+        res.json({ messages, nextBefore, hasMore });
     }
     catch (error) {
         console.error(error);
-        const code = error?.status || 500;
         res
-            .status(code)
+            .status(error?.status || 500)
             .json({ error: error?.message || "Failed to fetch messages" });
     }
 };
@@ -267,22 +269,26 @@ const sendMessage = async (req, res) => {
                 .status(400)
                 .json({ error: "Message must have body or attachments" });
         }
+        // Validate attachments: [{ name, size, type, url, key }]
+        const safeAttachments = Array.isArray(attachments)
+            ? attachments.slice(0, 10).map((a) => ({
+                name: String(a?.name || "file"),
+                size: Number(a?.size || 0),
+                type: String(a?.type || "application/octet-stream"),
+                url: String(a?.url || ""),
+                key: String(a?.key || ""),
+            }))
+            : null;
         const message = await prisma.message.create({
             data: {
                 conversationId,
                 senderId: userId,
                 body: body ?? null,
-                attachments: attachments ?? null,
+                attachments: safeAttachments, // JSON column
             },
             include: {
                 reads: true,
-                sender: {
-                    select: {
-                        userId: true,
-                        name: true,
-                        avatarUrl: true,
-                    },
-                },
+                sender: { select: { userId: true, name: true, avatarUrl: true } },
             },
         });
         await prisma.conversation.update({

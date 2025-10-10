@@ -222,7 +222,6 @@ export const getGstReturnStatus = async (req: Request, res: Response) => {
         ? -1
         : a.form.localeCompare(b.form)
     );
-    console.log({ gstin, items });
 
     return res.json({ gstin, items });
   } catch (e: any) {
