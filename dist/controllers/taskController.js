@@ -67,6 +67,7 @@ const mailerSend_1 = require("../utils/mailerSend");
 const date_fns_1 = require("date-fns");
 const cache_1 = require("../utils/cache");
 const axios_1 = __importDefault(require("axios"));
+const myoperator_1 = require("../integrations/whatsapp/myoperator");
 async function resolveOrgPrisma(req) {
     const maybe = req.orgPrisma;
     if (maybe)
@@ -1942,7 +1943,7 @@ async function updateOccurrenceStatus(req, res) {
             const emailSubject = `Task Status Changed: ${taskTitle}`;
             const emailBody = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2>Task Status Update</h2>
+          <h2>Status Update</h2>
           
           <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
             <h3 style="margin-top: 0;">${taskTitle}</h3>
@@ -1969,7 +1970,9 @@ async function updateOccurrenceStatus(req, res) {
                 taskId: updated.taskId,
                 occurrenceId: updated.id,
             });
-            console.log(`Status change notifications: ${notificationResult.emailsSent} assignee emails, client email: ${notificationResult.clientEmailSent}, ${notificationResult.notificationsSent} in-app notifications`);
+            // console.log(
+            //   `Status change notifications: ${notificationResult.emailsSent} assignee emails, client email: ${notificationResult.clientEmailSent}, ${notificationResult.notificationsSent} in-app notifications`
+            // );
         }
         // Emit socket event
         const orgId = req.user.orgId;
@@ -2708,7 +2711,7 @@ async function sendTaskToClient(req, res) {
                                 phone: true,
                             },
                         });
-                        console.log(coreUsers);
+                        // console.log(coreUsers);
                     }
                 }
                 catch (e) {
@@ -2864,6 +2867,15 @@ async function sendTaskToClient(req, res) {
             where: { id: occurrence.id },
             data: { clientMailSendCount: { increment: 1 } },
             select: { clientMailSendCount: true },
+        });
+        void (0, myoperator_1.sendTaskBizzServiceUpdate)({
+            phone: client.mobile || "",
+            organizationName,
+            clientName: client.name ?? "",
+            work: occurrence.title ?? "Task",
+            dueDate: new Date(occurrence.dueDate).toLocaleDateString("en-IN"),
+            assignedTo: normalizedAssignees[0]?.name ?? "Team",
+            status: occurrence.status ?? "OPEN",
         });
         return res.json({
             success: true,
@@ -3128,7 +3140,7 @@ const getDashboard = async (req, res) => {
         };
         const isOpen = (t) => (t.status || t.task?.status || "").toString().toUpperCase() === "OPEN";
         const rid = crypto.randomUUID();
-        console.log("[DEBUG] getDashboard: Starting data fetch...");
+        // console.log("[DEBUG] getDashboard: Starting data fetch...");
         console.time(`dashboard-main-query:${rid}`);
         const running = (async () => {
             // ---------------- Fetch org data ----------------
@@ -3156,7 +3168,9 @@ const getDashboard = async (req, res) => {
                 orgPrisma.client.findMany(),
             ]);
             console.timeEnd(`dashboard-main-query:${rid}`);
-            console.log(`[DEBUG] getDashboard: Found ${rawOccurrences.length} occurrences.`);
+            // console.log(
+            //   `[DEBUG] getDashboard: Found ${rawOccurrences.length} occurrences.`
+            // );
             // Filter cancelled (defensive)
             const occurrences = rawOccurrences.filter((t) => {
                 const occStatus = (t.status || "").toString().toUpperCase();
@@ -3750,7 +3764,7 @@ async function bulkUpdateOccurrences(req, res) {
                 if (!clientId || !optInMap[clientId])
                     return;
                 const title = occ.task?.title || occ.title || "Your Task";
-                const emailSubject = `Task Status Update: ${title}`;
+                const emailSubject = `Status Update: ${title}`;
                 const emailBody = `
           <p><strong>Current Status:</strong> ${occ.status}</p>
           ${occ.dueDate
@@ -4063,7 +4077,7 @@ notificationPayload, opts = {}) {
     const client = occurrence.task?.clientId
         ? await orgPrisma.client.findUnique({
             where: { id: occurrence.task.clientId },
-            select: { id: true, name: true, email: true, clientCommunication: true },
+            select: { id: true, name: true, email: true, mobile: true, clientCommunication: true },
         })
         : null;
     let emailsSent = 0;
@@ -4114,6 +4128,14 @@ notificationPayload, opts = {}) {
                 <td style="padding:8px; color:#111827;">${occurrence.status ?? "—"}</td>
               </tr>
               <tr>
+                <td style="padding:8px; font-weight:bold; color:#111827;">Assigned Person:</td>
+                <td style="padding:8px; color:#111827;">${assigneeNameEmailHtml}</td>
+              </tr>
+              <tr style="background:#f9fafb;">
+                <td style="padding:8px; font-weight:bold; color:#111827;">Contact:</td>
+                <td style="padding:8px; color:#111827;">${contactNumbersText}</td>
+              </tr>
+              <tr>
                 <td style="padding:8px; font-weight:bold; color:#111827;">Due Date for Submission:</td>
                 <td style="padding:8px; color:#111827;">${dueDateStr}</td>
               </tr>
@@ -4138,7 +4160,7 @@ notificationPayload, opts = {}) {
         </div>
       </div>
     `.trim();
-        const subject = `Task Status Update: ${occurrence.task?.title || occurrence.title || "Your Task"}`;
+        const subject = `Status Update: ${occurrence.task?.title || occurrence.title || "Your Task"}`;
         const text = plainTextFromHtml(html);
         clientEmailPromise = (async () => {
             try {
@@ -4151,7 +4173,31 @@ notificationPayload, opts = {}) {
                 clientEmailSent = true;
                 recipients.client = client.email;
                 emailsSent++;
-                console.log(`Client email sent to ${client.email} for occurrence ${occurrenceId}`);
+                // after: clientEmailSent = true; recipients.client = client.email!; emailsSent++;
+                void (async () => {
+                    try {
+                        const dueDateStr = occurrence.dueDate
+                            ? new Date(occurrence.dueDate).toLocaleDateString("en-IN")
+                            : "—";
+                        const primaryAssigneeName = assigneeUsers[0]?.name ?? "Team";
+                        await (0, myoperator_1.sendTaskBizzServiceUpdate)({
+                            phone: client.mobile || "",
+                            organizationName,
+                            clientName: client.name ?? "",
+                            work: occurrence.title ?? "Task",
+                            dueDate: dueDateStr,
+                            assignedTo: primaryAssigneeName,
+                            status: occurrence.status ?? "OPEN",
+                            refId: `OCC-${Date.now()}`,
+                        });
+                    }
+                    catch (e) {
+                        console.warn("[WA] Client send failed:", e?.message ?? e);
+                    }
+                })();
+                // console.log(
+                //   `Client email sent to ${client.email} for occurrence ${occurrenceId}`
+                // );
             }
             catch (error) {
                 console.error(`Failed to send client email to ${client.email}:`, error);
@@ -4238,7 +4284,7 @@ async function sendTaskCreationNotifications(orgPrisma, corePrisma, io, orgId, t
                 This is an automated notification from TaskBizz. Please do not reply to this email.
               </p>
             </div>`);
-                    console.log(`Task creation email sent to assignee ${user.email}`);
+                    // console.log(`Task creation email sent to assignee ${user.email}`);
                 }
                 catch (emailErr) {
                     console.warn(`Failed to send assignment email to ${user.email}:`, emailErr);
@@ -4266,7 +4312,7 @@ async function sendTaskCreationNotifications(orgPrisma, corePrisma, io, orgId, t
               This is an automated notification from TaskBizz. Please do not reply to this email.
             </p>
           </div>`);
-                console.log(`Task creation email sent to client ${task.client.email}`);
+                // console.log(`Task creation email sent to client ${task.client.email}`);
             }
             catch (clientEmailErr) {
                 console.warn(`Failed to send client creation email to ${task.client.email}:`, clientEmailErr);

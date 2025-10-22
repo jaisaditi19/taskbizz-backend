@@ -44,6 +44,7 @@ import {
 } from "../utils/cache";
 import { invalidateOrgCaches } from "../utils/cacheInvalidate";
 import axios from "axios";
+import { sendTaskBizzServiceUpdate } from "../integrations/whatsapp/myoperator";
 
 async function resolveOrgPrisma(req: Request) {
   const maybe = (req as any).orgPrisma;
@@ -2233,7 +2234,7 @@ export async function updateOccurrenceStatus(
       const emailSubject = `Task Status Changed: ${taskTitle}`;
       const emailBody = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2>Task Status Update</h2>
+          <h2>Status Update</h2>
           
           <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
             <h3 style="margin-top: 0;">${taskTitle}</h3>
@@ -2281,9 +2282,9 @@ export async function updateOccurrenceStatus(
         }
       );
 
-      console.log(
-        `Status change notifications: ${notificationResult.emailsSent} assignee emails, client email: ${notificationResult.clientEmailSent}, ${notificationResult.notificationsSent} in-app notifications`
-      );
+      // console.log(
+      //   `Status change notifications: ${notificationResult.emailsSent} assignee emails, client email: ${notificationResult.clientEmailSent}, ${notificationResult.notificationsSent} in-app notifications`
+      // );
     }
 
     // Emit socket event
@@ -3151,7 +3152,7 @@ export async function sendTaskToClient(
                 phone: true,
               },
             });
-            console.log(coreUsers);
+            // console.log(coreUsers);
           }
         } catch (e) {
           console.warn(
@@ -3347,6 +3348,17 @@ export async function sendTaskToClient(
       data: { clientMailSendCount: { increment: 1 } },
       select: { clientMailSendCount: true },
     });
+
+    void sendTaskBizzServiceUpdate({
+      phone: client.mobile || "",
+      organizationName,
+      clientName: client.name ?? "",
+      work: occurrence.title ?? "Task",
+      dueDate: new Date(occurrence.dueDate!).toLocaleDateString("en-IN"),
+      assignedTo: normalizedAssignees[0]?.name ?? "Team",
+      status: occurrence.status ?? "OPEN",
+    });
+
 
     return res.json({
       success: true,
@@ -3656,7 +3668,7 @@ export const getDashboard = async (
       (t.status || t.task?.status || "").toString().toUpperCase() === "OPEN";
 
     const rid = crypto.randomUUID();
-    console.log("[DEBUG] getDashboard: Starting data fetch...");
+    // console.log("[DEBUG] getDashboard: Starting data fetch...");
     console.time(`dashboard-main-query:${rid}`);
 
     const running = (async () => {
@@ -3686,9 +3698,9 @@ export const getDashboard = async (
       ]);
 
       console.timeEnd(`dashboard-main-query:${rid}`);
-      console.log(
-        `[DEBUG] getDashboard: Found ${rawOccurrences.length} occurrences.`
-      );
+      // console.log(
+      //   `[DEBUG] getDashboard: Found ${rawOccurrences.length} occurrences.`
+      // );
 
       // Filter cancelled (defensive)
       const occurrences = rawOccurrences.filter((t: any) => {
@@ -4416,7 +4428,7 @@ export async function bulkUpdateOccurrences(
         if (!clientId || !optInMap[clientId]) return;
 
         const title = occ.task?.title || occ.title || "Your Task";
-        const emailSubject = `Task Status Update: ${title}`;
+        const emailSubject = `Status Update: ${title}`;
         const emailBody = `
           <p><strong>Current Status:</strong> ${occ.status}</p>
           ${
@@ -4833,7 +4845,7 @@ export async function notifyOccurrenceAssigneesAndClient(
     occurrence.task?.clientId
       ? await orgPrisma.client.findUnique({
           where: { id: occurrence.task.clientId },
-          select: { id: true, name: true, email: true, clientCommunication: true },
+          select: { id: true, name: true, email: true, mobile:true, clientCommunication: true },
         })
       : null;
 
@@ -4878,14 +4890,26 @@ export async function notifyOccurrenceAssigneesAndClient(
           <!-- Header -->
           <div style="background:#ffffff; padding:20px; text-align:center; border-bottom:1px solid #e5e7eb;">
             <h2 style="margin:0; color:#111827; font-size:18px;">${organizationName}</h2>
-            <h3 style="margin:6px 0 0; color:#2563eb; font-size:16px;">${occurrence.title ?? "Task"}</h3>
+            <h3 style="margin:6px 0 0; color:#2563eb; font-size:16px;">${
+              occurrence.title ?? "Task"
+            }</h3>
           </div>
 
           <div style="padding:20px;">
             <table style="width:100%; border-collapse:collapse;">
               <tr style="background:#f9fafb;">
                 <td style="padding:8px; font-weight:bold; color:#111827;">Current Status:</td>
-                <td style="padding:8px; color:#111827;">${occurrence.status ?? "—"}</td>
+                <td style="padding:8px; color:#111827;">${
+                  occurrence.status ?? "—"
+                }</td>
+              </tr>
+              <tr>
+                <td style="padding:8px; font-weight:bold; color:#111827;">Assigned Person:</td>
+                <td style="padding:8px; color:#111827;">${assigneeNameEmailHtml}</td>
+              </tr>
+              <tr style="background:#f9fafb;">
+                <td style="padding:8px; font-weight:bold; color:#111827;">Contact:</td>
+                <td style="padding:8px; color:#111827;">${contactNumbersText}</td>
               </tr>
               <tr>
                 <td style="padding:8px; font-weight:bold; color:#111827;">Due Date for Submission:</td>
@@ -4913,7 +4937,7 @@ export async function notifyOccurrenceAssigneesAndClient(
       </div>
     `.trim();
 
-    const subject = `Task Status Update: ${occurrence.task?.title || occurrence.title || "Your Task"}`;
+    const subject = `Status Update: ${occurrence.task?.title || occurrence.title || "Your Task"}`;
     const text = plainTextFromHtml(html);
 
     clientEmailPromise = (async () => {
@@ -4927,7 +4951,34 @@ export async function notifyOccurrenceAssigneesAndClient(
         clientEmailSent = true;
         recipients.client = client.email!;
         emailsSent++;
-        console.log(`Client email sent to ${client.email} for occurrence ${occurrenceId}`);
+
+        // after: clientEmailSent = true; recipients.client = client.email!; emailsSent++;
+        void (async () => {
+          try {
+            const dueDateStr = occurrence.dueDate
+              ? new Date(occurrence.dueDate).toLocaleDateString("en-IN")
+              : "—";
+            
+            const primaryAssigneeName = assigneeUsers[0]?.name ?? "Team";
+
+            await sendTaskBizzServiceUpdate({
+              phone: client.mobile || "",
+              organizationName,
+              clientName: client.name ?? "",
+              work: occurrence.title ?? "Task",
+              dueDate: dueDateStr,
+              assignedTo: primaryAssigneeName,
+              status: occurrence.status ?? "OPEN",
+              refId: `OCC-${Date.now()}`,
+            });
+          } catch (e) {
+            console.warn("[WA] Client send failed:", (e as any)?.message ?? e);
+          }
+        })();
+
+        // console.log(
+        //   `Client email sent to ${client.email} for occurrence ${occurrenceId}`
+        // );
       } catch (error) {
         console.error(`Failed to send client email to ${client.email}:`, error);
       }
@@ -5033,7 +5084,7 @@ export async function sendTaskCreationNotifications(
               </p>
             </div>`
           );
-          console.log(`Task creation email sent to assignee ${user.email}`);
+          // console.log(`Task creation email sent to assignee ${user.email}`);
         } catch (emailErr) {
           console.warn(`Failed to send assignment email to ${user.email}:`, emailErr);
         }
@@ -5065,7 +5116,7 @@ export async function sendTaskCreationNotifications(
             </p>
           </div>`
         );
-        console.log(`Task creation email sent to client ${task.client.email}`);
+        // console.log(`Task creation email sent to client ${task.client.email}`);
       } catch (clientEmailErr) {
         console.warn(`Failed to send client creation email to ${task.client.email}:`, clientEmailErr);
       }
