@@ -6,7 +6,15 @@ const API_KEY = process.env.MYOPERATOR_API_KEY!;
 const COMPANY_ID = process.env.MYOP_COMPANY_ID!;
 const PHONE_NUMBER_ID = process.env.MYOP_PHONE_NUMBER_ID!;
 const TEMPLATE_NAME =
-  process.env.MYOP_TEMPLATE_SERVICE_UPDATE || "taskbizz_update";
+  process.env.MYOP_TEMPLATE_SERVICE_UPDATE || "taskbizz_msg";
+
+  function buildMyOpRefId(input?: string) {
+    const raw = (
+      input ||
+      `OCC-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    ).replace(/\s+/g, "");
+    return raw.length <= 50 ? raw : raw.slice(0, 50);
+  }
 
 /**
  * Normalize phone number to E.164 format for Indian numbers
@@ -152,39 +160,52 @@ export async function sendTaskBizzServiceUpdate(params: {
   // MyOperator expects template parameters in WhatsApp components format
   // … keep everything above the same …
 
-const payload = {
-  phone_number_id: PHONE_NUMBER_ID,
-  customer_country_code: "91",
-  customer_number,
-  data: {
-    type: "template",
-    language: "en", // string here ✅
-    context: {
-      template_name: TEMPLATE_NAME, // e.g. "taskbizz_update"
-      // namespace: process.env.MYOP_NAMESPACE, // add if required by your account
-      body: {
-        orgname: paramStrings[0],
-        client: paramStrings[1],
-        title: paramStrings[2],
-        due: paramStrings[3],
-        assigned: paramStrings[4],
-        status: paramStrings[5],
+  // map your already-built paramStrings:
+  const ORG = paramStrings[0]; // orgname (header {{1}})
+  const CLIENT = paramStrings[1]; // body {{1}}
+  const TITLE = paramStrings[2]; // body {{3}}
+  const DUE = paramStrings[3]; // body {{5}}
+  const ASSIGN = paramStrings[4]; // body {{6}}
+  const STATUS = paramStrings[5]; // body {{4}}
+
+  const payload = {
+    phone_number_id: PHONE_NUMBER_ID,
+    customer_country_code: "91",
+    customer_number,
+    data: {
+      type: "template",
+      language: "en", // ← string, as required
+      context: {
+        template_name: TEMPLATE_NAME, // "taskbizz_msg"
+
+        // NEW: numbered header/body fields as your tenant expects
+        header: {
+          "1": ORG, // header {{1}}
+        },
+        body: {
+          "1": CLIENT, // body {{1}}
+          // "2" is unused in your template
+          "3": TITLE, // body {{3}}
+          "4": STATUS, // body {{4}}
+          "5": DUE, // body {{5}}
+          "6": ASSIGN, // body {{6}}
+        },
       },
     },
-  },
-  reply_to: null,
-  myop_ref_id: params.refId || `TASK-${Date.now()}-${customer_number}`,
-};
-
+    reply_to: null,
+    myop_ref_id: buildMyOpRefId(
+      params.refId || `TASK-${Date.now()}-${customer_number}`
+    ),
+  };
 
   try {
-    console.log(`[MyOperator WA] Sending to +91${customer_number}...`);
-    console.log(`[MyOperator WA] Template: ${TEMPLATE_NAME}`);
-    console.log(`[MyOperator WA] Params:`, paramStrings);
-    console.log(
-      `[MyOperator WA] Full Payload:`,
-      JSON.stringify(payload, null, 2)
-    );
+    // console.log(`[MyOperator WA] Sending to +91${customer_number}...`);
+    // console.log(`[MyOperator WA] Template: ${TEMPLATE_NAME}`);
+    // console.log(`[MyOperator WA] Params:`, paramStrings);
+    // console.log(
+    //   `[MyOperator WA] Full Payload:`,
+    //   JSON.stringify(payload, null, 2)
+    // );
 
     const response = await axios.post(BASE_URL, payload, {
       headers: {
@@ -199,10 +220,10 @@ const payload = {
 
     // Check response status
     if (response.status >= 200 && response.status < 300) {
-      console.log("[MyOperator WA] ✅ Success:", {
-        status: response.status,
-        data: response.data,
-      });
+    //   console.log("[MyOperator WA] ✅ Success:", {
+    //     status: response.status,
+    //     data: response.data,
+    //   });
       return {
         success: true,
         messageId: response.data?.message_id || response.data?.id,
@@ -261,8 +282,8 @@ export async function testMyOperatorConfig(): Promise<void> {
   if (missing.length > 0) {
     console.error(`[MyOperator] Missing env vars: ${missing.join(", ")}`);
   } else {
-    console.log("[MyOperator] ✅ Configuration OK");
-    console.log(`[MyOperator] Template: ${TEMPLATE_NAME}`);
+    // console.log("[MyOperator] ✅ Configuration OK");
+    // console.log(`[MyOperator] Template: ${TEMPLATE_NAME}`);
   }
 }
 
@@ -270,17 +291,17 @@ export async function testMyOperatorConfig(): Promise<void> {
  * Send a test message to verify template integration
  */
 export async function sendTestMessage(testPhone: string): Promise<void> {
-  console.log("\n=== MyOperator Template Test ===");
-  console.log("Template: Update from {{orgname}}");
-  console.log("Expected body format:");
-  console.log("Dear {{client}},");
-  console.log("Service update for the assigned work :");
-  console.log("Work : {{title}}");
-  console.log("Due Date: {{due}}");
-  console.log("Assigned To: {{assigned}}");
-  console.log("Current Status: {{status}}");
-  console.log("*Do Not reply on this number.*");
-  console.log("\n");
+//   console.log("\n=== MyOperator Template Test ===");
+//   console.log("Template: Update from {{orgname}}");
+//   console.log("Expected body format:");
+//   console.log("Dear {{client}},");
+//   console.log("Service update for the assigned work :");
+//   console.log("Work : {{title}}");
+//   console.log("Due Date: {{due}}");
+//   console.log("Assigned To: {{assigned}}");
+//   console.log("Current Status: {{status}}");
+//   console.log("*Do Not reply on this number.*");
+//   console.log("\n");
 
   const result = await sendTaskBizzServiceUpdate({
     phone: testPhone,
@@ -293,5 +314,5 @@ export async function sendTestMessage(testPhone: string): Promise<void> {
     refId: `TEST-${Date.now()}`,
   });
 
-  console.log("\nTest Result:", result);
+//   console.log("\nTest Result:", result);
 }
