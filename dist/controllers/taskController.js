@@ -839,9 +839,28 @@ async function listTaskOccurrences(req, res) {
         AND.push({ startDate: { lte: windowEnd } });
         AND.push({ dueDate: { gte: windowStart } });
         // Status
-        const statusVals = toList(status);
-        if (statusVals?.length) {
-            AND.push({ status: { in: statusVals.map((s) => s.toUpperCase()) } });
+        const VALID_STATUSES = [
+            "OPEN",
+            "IN_PROGRESS",
+            "ON_TRACK",
+            "DELAYED",
+            "IN_TESTING",
+            "ON_HOLD",
+            "APPROVED",
+            "CANCELLED",
+            "PLANNING",
+            "COMPLETED",
+        ];
+        const requested = (toList(status) || [])
+            .map((s) => String(s).toUpperCase())
+            .filter((s) => VALID_STATUSES.includes(s));
+        if (requested.length > 0) {
+            // honor the caller's filter, but only with valid enum values
+            AND.push({ status: { in: requested } });
+        }
+        else {
+            // DEFAULT: show all active (exclude completed/cancelled)
+            AND.push({ NOT: { status: { in: ["COMPLETED", "CANCELLED"] } } });
         }
         // Assignee
         const assignedVals = toList(assignedTo);
@@ -956,7 +975,9 @@ async function listTaskOccurrences(req, res) {
             window: { start: windowStart ?? null, end: windowEnd ?? null }, // full current year when dates are cleared
             pagination: { take, nextCursor: next, count: occurrences.length },
             filters: {
-                status: statusVals ?? "ALL",
+                status: requested.length
+                    ? requested
+                    : ["ACTIVE_DEFAULT_EXCLUDES_COMPLETED_CANCELLED"],
                 assignedTo: assignedVals ?? "ALL",
                 clientId: clientVals ?? "ALL",
                 projectId: projectVals ?? "ALL",
