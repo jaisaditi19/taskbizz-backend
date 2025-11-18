@@ -423,7 +423,7 @@ export const getMe = async (req: Request & { user?: any }, res: Response) => {
 };
 
 
-// Google login updated to use access + refresh tokens
+// Google login — do NOT auto-create users; return 404 if not found
 export const googleLogin = async (req: Request, res: Response) => {
   try {
     const { id_token } = req.body;
@@ -442,32 +442,20 @@ export const googleLogin = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "Invalid Google token payload" });
     }
 
-    const { email, name, picture, sub: googleId } = payload;
-
+    const { email /*, name, picture, sub: googleId */ } = payload;
     if (!email) {
       return res.status(400).json({ message: "Google account has no email" });
     }
 
     const prisma = getCorePrisma();
 
-    // Check if user already exists
-    let user = await prisma.user.findUnique({ where: { email } });
-
+    // IMPORTANT: do NOT create the user here — return 404 so frontend shows "User doesn't exist"
+    const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
-      // Register new user with role "ADMIN" or "EMPLOYEE" (choose your default)
-      user = await prisma.user.create({
-        data: {
-          name: name || "Google User",
-          email,
-          password: "", // no password since google login
-          isVerified: true,
-          role: "ADMIN", // or "EMPLOYEE" based on your app logic
-          status: "ACTIVE", // Set status to ACTIVE for new users
-        },
-      });
+      return res.status(404).json({ message: "User not found. Please register first." });
     }
 
-    // Generate tokens
+    // User exists — issue tokens
     const accessToken = signAccessToken({
       id: user.id,
       role: user.role,
@@ -492,12 +480,11 @@ export const googleLogin = async (req: Request, res: Response) => {
       },
     });
 
-    // Set refresh token in HttpOnly secure cookie
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
     return res.status(200).json({
@@ -508,6 +495,7 @@ export const googleLogin = async (req: Request, res: Response) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        orgId: user.orgId || null,
       },
     });
   } catch (error) {
