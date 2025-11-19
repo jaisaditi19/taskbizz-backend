@@ -2253,7 +2253,7 @@ export async function updateOccurrenceStatus(
 
     // Send notifications if status changed
     if (statusChanged) {
-      const emailSubject = `Task Status Changed: ${taskTitle}`;
+      const emailSubject = `Status Changed: ${taskTitle}`;
       const emailBody = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2>Status Update</h2>
@@ -2284,6 +2284,90 @@ export async function updateOccurrenceStatus(
         </div>
       `;
 
+      // ---------- Build attachments to include with client email ----------
+      let emailAttachmentsForNotify: Array<{
+        filename: string;
+        content: Buffer;
+        contentType?: string;
+      }> = [];
+
+      try {
+        if (updated.clientId) {
+          // Fetch task + occurrence attachments
+          const [taskAttachments, occAttachments] = await Promise.all([
+            orgPrisma.taskAttachment.findMany({
+              where: { taskId: updated.taskId },
+            }),
+            orgPrisma.taskOccurrenceAttachment.findMany({
+              where: { occurrenceId: updated.id },
+            }),
+          ]);
+          const allAttachments = [...taskAttachments, ...occAttachments];
+
+          if (allAttachments.length > 0) {
+            const axios = (await import("axios")).default;
+            const fallbackUrls: string[] = [];
+
+            await Promise.all(
+              allAttachments.map(async (att: any) => {
+                try {
+                  const url = await getCachedFileUrlFromSpaces(
+                    att.key,
+                    req.user.orgId
+                  );
+                  const resp = await axios.get(url, {
+                    responseType: "arraybuffer",
+                    validateStatus: (s) => s >= 200 && s < 300,
+                  });
+                  const buf = Buffer.from(resp.data as ArrayBuffer);
+
+                  const filename =
+                    att.filename ||
+                    String(att.key).split("/").filter(Boolean).pop() ||
+                    `attachment-${att.id || Date.now()}`;
+
+                  const contentType =
+                    (resp.headers &&
+                      (resp.headers["content-type"] as string)) ||
+                    undefined;
+
+                  emailAttachmentsForNotify.push({
+                    filename,
+                    content: buf,
+                    contentType,
+                  });
+                } catch (dlErr) {
+                  console.warn(
+                    `[updateOccurrenceStatus] failed to download att ${
+                      att.id || att.key
+                    }:`,
+                    (dlErr as any)?.message ?? dlErr
+                  );
+                  try {
+                    // store fallback link for email body if needed
+                    const url = await getCachedFileUrlFromSpaces(
+                      att.key,
+                      req.user.orgId
+                    );
+                    fallbackUrls.push(url);
+                  } catch (e) {
+                    // ignore
+                  }
+                }
+              })
+            );
+
+            // if you want to include fallbackUrls in the notify body, pass them too or let notify helper add them
+          }
+        }
+      } catch (e) {
+        console.warn(
+          "Failed to prepare attachments for notify:",
+          (e as any)?.message ?? e
+        );
+      }
+      // ---------- end attachments ----------
+
       // Send notifications to assignees AND client
       notificationResult = await notifyOccurrenceAssigneesAndClient(
         orgPrisma,
@@ -2301,6 +2385,11 @@ export async function updateOccurrenceStatus(
           } to ${status}.`,
           taskId: updated.taskId,
           occurrenceId: updated.id,
+        },
+        {
+          // new optional param: attachments for client email
+          attachments: emailAttachmentsForNotify,
+          // optionally pass fallbackUrls: fallbackUrls (if you collected them)
         }
       );
 
@@ -4445,6 +4534,122 @@ export async function bulkUpdateOccurrences(
         for (const c of clients) optInMap[c.id] = !!c.clientCommunication;
       }
 
+      // Helper: download attachments for a single occurrence and return Nodemailer-style attachments + fallback URLs.
+      // It will avoid attaching files if total size > MAX_ATTACHMENT_BYTES.
+      const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024; // 8 MB threshold, adjust as needed
+
+      async function prepareAttachmentsForOccurrence(occurrenceId: string) {
+        const result: {
+          attachments: Array<{
+            filename: string;
+            content: Buffer;
+            contentType?: string;
+          }>;
+          fallbackUrls: string[];
+          totalBytes: number;
+        } = { attachments: [], fallbackUrls: [], totalBytes: 0 };
+
+        try {
+          // get the taskId for this occurrence
+          const occRow = await orgPrisma.taskOccurrence.findUnique({
+            where: { id: occurrenceId },
+            select: { taskId: true },
+          });
+          const taskId = occRow?.taskId;
+          if (!taskId) return result;
+
+          const [taskAttachments, occAttachments] = await Promise.all([
+            orgPrisma.taskAttachment.findMany({ where: { taskId } }),
+            orgPrisma.taskOccurrenceAttachment.findMany({
+              where: { occurrenceId },
+            }),
+          ]);
+
+          const allAttachments = [...taskAttachments, ...occAttachments];
+          if (allAttachments.length === 0) return result;
+
+          const axios = (await import("axios")).default;
+
+          await Promise.all(
+            allAttachments.map(async (att: any) => {
+              try {
+                const url = await getCachedFileUrlFromSpaces(
+                  att.key,
+                  req.user.orgId
+                );
+                const resp = await axios.get(url, {
+                  responseType: "arraybuffer",
+                  validateStatus: (s: number) => s >= 200 && s < 300,
+                });
+                const buf = Buffer.from(resp.data as ArrayBuffer);
+
+                const filename =
+                  att.filename ||
+                  String(att.key).split("/").filter(Boolean).pop() ||
+                  `attachment-${att.id || Date.now()}`;
+
+                const contentType =
+                  (resp.headers && (resp.headers["content-type"] as string)) ||
+                  undefined;
+
+                result.attachments.push({
+                  filename,
+                  content: buf,
+                  contentType,
+                });
+                result.totalBytes += buf.length;
+              } catch (dlErr) {
+                console.warn(
+                  `[bulkUpdateOccurrences] failed download for att ${
+                    att.id || att.key
+                  } (occ ${occurrenceId}):`,
+                  (dlErr as any)?.message ?? dlErr
+                );
+                try {
+                  const url = await getCachedFileUrlFromSpaces(
+                    att.key,
+                    req.user.orgId
+                  );
+                  result.fallbackUrls.push(url);
+                } catch (e) {
+                  // ignore
+                }
+              }
+            })
+          );
+
+          // If total size too big, drop attachments and only provide fallback links
+          if (result.totalBytes > MAX_ATTACHMENT_BYTES) {
+            console.info(
+              `[bulkUpdateOccurrences] total attachments for occurrence ${occurrenceId} exceed ${MAX_ATTACHMENT_BYTES} bytes; sending links instead of attachments`
+            );
+            // Attempt to generate signed URLs for all attachments
+            result.attachments = [];
+            const signedPromises = allAttachments.map(async (att: any) => {
+              try {
+                return await getCachedFileUrlFromSpaces(
+                  att.key,
+                  req.user.orgId
+                );
+              } catch {
+                return null;
+              }
+            });
+            const signed = await Promise.all(signedPromises);
+            for (const s of signed) if (s) result.fallbackUrls.push(s);
+            result.totalBytes = 0;
+          }
+        } catch (e) {
+          console.warn(
+            `[bulkUpdateOccurrences] prepareAttachmentsForOccurrence failed for ${occurrenceId}:`,
+            (e as any)?.message ?? e
+          );
+        }
+
+        return result;
+      }
+
+      // Build per-occurrence email jobs (concurrent but downloads happen per item)
       const emailJobs = updatedOccurrences.map(async (occ: any) => {
         const clientId = occ.task?.clientId as string | undefined;
         if (!clientId || !optInMap[clientId]) return;
@@ -4463,6 +4668,19 @@ export async function bulkUpdateOccurrences(
         `.trim();
 
         try {
+          // Prepare attachments for this occurrence (downloads + fallback links)
+          const { attachments, fallbackUrls } =
+            await prepareAttachmentsForOccurrence(occ.id);
+
+          // Prepare notify options, pass attachments/fallbackUrls through
+          const notifyOpts: NotifyOptions = {
+            sendAssigneeEmails: false,
+            sendInAppNotifications: false,
+            respectClientOptIn: true,
+            attachments: attachments.length ? attachments : undefined,
+            fallbackUrls: fallbackUrls.length ? fallbackUrls : undefined,
+          };
+
           await notifyOccurrenceAssigneesAndClient(
             orgPrisma,
             prisma,
@@ -4472,11 +4690,7 @@ export async function bulkUpdateOccurrences(
             emailSubject,
             emailBody,
             undefined,
-            {
-              sendAssigneeEmails: false,
-              sendInAppNotifications: false,
-              respectClientOptIn: true,
-            }
+            notifyOpts
           );
         } catch (e) {
           console.warn("Client email notify failed for occ", occ.id, e);
@@ -4727,10 +4941,17 @@ function plainTextFromHtml(html: string) {
     .trim();
 }
 
+type NotifyAttachment = {
+  filename: string;
+  content: Buffer | string;
+  contentType?: string;
+};
 type NotifyOptions = {
-  sendAssigneeEmails?: boolean;      // default false
-  sendInAppNotifications?: boolean;  // default false
-  respectClientOptIn?: boolean;      // default false (force send to client)
+  sendAssigneeEmails?: boolean; // default false
+  sendInAppNotifications?: boolean; // default false
+  respectClientOptIn?: boolean; // default false (force send to client)
+  attachments?: NotifyAttachment[];
+  fallbackUrls?: string[];
 };
 
 export async function notifyOccurrenceAssigneesAndClient(
@@ -4962,49 +5183,115 @@ export async function notifyOccurrenceAssigneesAndClient(
     const subject = `Status Update: ${occurrence.task?.title || occurrence.title || "Your Task"}`;
     const text = plainTextFromHtml(html);
 
-    clientEmailPromise = (async () => {
-      try {
-        await sendTaskEmail({
-          to: client.email!,
-          subject,
-          text,
-          html,
-        });
-        clientEmailSent = true;
-        recipients.client = client.email!;
-        emailsSent++;
+ clientEmailPromise = (async () => {
+   try {
+     // Prepare final HTML by appending fallback links (if any)
+     let finalHtml = html;
+     const fallbackLinks = Array.isArray((opts as any)?.fallbackUrls)
+       ? (opts as any).fallbackUrls
+       : [];
 
-        // after: clientEmailSent = true; recipients.client = client.email!; emailsSent++;
-        void (async () => {
-          try {
-            const dueDateStr = occurrence.dueDate
-              ? new Date(occurrence.dueDate).toLocaleDateString("en-IN")
-              : "—";
-            
-            const primaryAssigneeName = assigneeUsers[0]?.name ?? "Team";
+     if (fallbackLinks.length > 0) {
+       finalHtml += `<div style="margin-top:12px;"><strong>Attachment links:</strong><br/>${fallbackLinks
+         .map((u: string) => `<a href="${u}">${u}</a>`)
+         .join("<br/>")}</div>`;
+     }
 
-            await sendTaskBizzServiceUpdate({
-              phone: client.mobile || "",
-              organizationName,
-              clientName: client.name ?? "",
-              work: occurrence.title ?? "Task",
-              dueDate: dueDateStr,
-              assignedTo: primaryAssigneeName,
-              status: occurrence.status ?? "OPEN",
-              refId: `OCC-${Date.now()}`,
-            });
-          } catch (e) {
-            console.warn("[WA] Client send failed:", (e as any)?.message ?? e);
-          }
-        })();
+     // If opts.attachments provided, prepare both shapes (nodemailer & api/base64)
+     const providedAttachments = Array.isArray((opts as any)?.attachments)
+       ? (opts as any).attachments
+       : [];
 
-        // console.log(
-        //   `Client email sent to ${client.email} for occurrence ${occurrenceId}`
-        // );
-      } catch (error) {
-        console.error(`Failed to send client email to ${client.email}:`, error);
-      }
-    })();
+     // Build a small attachments-summary section for the HTML (shows filenames)
+     if (providedAttachments.length > 0) {
+       const fileListHtml = providedAttachments
+         .map((a: any) => `<li>${a.filename ?? "Attachment"}</li>`)
+         .join("");
+       finalHtml += `
+        <div style="margin-top:12px;">
+          <div style="font-weight:600; color:#111827; margin-bottom:6px;">Attached files</div>
+          <ul style="margin:0 0 0 18px; padding:0; color:#111827;">${fileListHtml}</ul>
+        </div>
+      `;
+     }
+
+     const subjectWithTask =
+       subject ||
+       `Status Update: ${
+         occurrence.task?.title || occurrence.title || "Your Task"
+       }`;
+
+     // Choose mailer shape (default nodemailer)
+     const mailerType = (process.env.MAILER_TYPE || "nodemailer").toLowerCase();
+
+     if (mailerType === "api") {
+       // convert to API/base64 attachments
+       const apiAttachments = providedAttachments.map((a: any) => ({
+         content:
+           a.content instanceof Buffer
+             ? (a.content as Buffer).toString("base64")
+             : String(a.content || ""),
+         filename: a.filename,
+         type: a.contentType || "application/octet-stream",
+         disposition: "attachment",
+       }));
+
+       await sendTaskEmail({
+         to: client.email!,
+         subject: subjectWithTask,
+         text: plainTextFromHtml(finalHtml),
+         html: finalHtml,
+         attachments: apiAttachments.length ? apiAttachments : undefined,
+       });
+     } else {
+       // nodemailer-style: Buffer attachments
+       const nodemailerAttachments = providedAttachments.map((a: any) => ({
+         filename: a.filename,
+         content: a.content,
+         contentType: a.contentType,
+       }));
+
+       await sendTaskEmail({
+         to: client.email!,
+         subject: subjectWithTask,
+         text: plainTextFromHtml(finalHtml),
+         html: finalHtml,
+         attachments: nodemailerAttachments.length
+           ? nodemailerAttachments
+           : undefined,
+       });
+     }
+
+     clientEmailSent = true;
+     recipients.client = client.email!;
+     emailsSent++;
+
+     // Fire WhatsApp / service update as before (keeps your existing behavior)
+     void (async () => {
+       try {
+         const dueDateStr2 = occurrence.dueDate
+           ? new Date(occurrence.dueDate).toLocaleDateString("en-IN")
+           : "—";
+         const primaryAssigneeName = assigneeUsers[0]?.name ?? "Team";
+
+         await sendTaskBizzServiceUpdate({
+           phone: client.mobile || "",
+           organizationName,
+           clientName: client.name ?? "",
+           work: occurrence.title ?? "Task",
+           dueDate: dueDateStr2,
+           assignedTo: primaryAssigneeName,
+           status: occurrence.status ?? "OPEN",
+           refId: `OCC-${Date.now()}`,
+         });
+       } catch (e) {
+         console.warn("[WA] Client send failed:", (e as any)?.message ?? e);
+       }
+     })();
+   } catch (error) {
+     console.error(`Failed to send client email to ${client.email}:`, error);
+   }
+ })();
   }
 
   // 6) In-app notifications (optional; unchanged)
