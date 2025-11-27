@@ -154,22 +154,22 @@ function attachSocket(server) {
                         where: { id: user.id },
                         select: { name: true, email: true }, // adjust based on your User model
                     });
-                    if (userData) {
-                        // Use upsert to handle both update and create atomically
-                        await prisma.directoryUser.upsert({
-                            where: { userId: user.id },
-                            update: {
-                                lastActiveAt: now,
-                            },
-                            create: {
-                                userId: user.id,
-                                lastActiveAt: now,
-                                name: userData.name,
-                                // Add other required fields based on your directoryUser model
-                                // email: userData.email, // uncomment if email is required
-                            },
-                        });
-                    }
+                    // if (userData) {
+                    //   // Use upsert to handle both update and create atomically
+                    //   await prisma.directoryUser.upsert({
+                    //     where: { userId: user.id },
+                    //     update: {
+                    //       lastActiveAt: now,
+                    //     },
+                    //     create: {
+                    //       userId: user.id,
+                    //       lastActiveAt: now,
+                    //       name: userData.name,
+                    //       // Add other required fields based on your directoryUser model
+                    //       // email: userData.email, // uncomment if email is required
+                    //     },
+                    //   });
+                    // }
                 }
                 catch (error) {
                     console.error(`Failed to update directoryUser for ${user.id}:`, error);
