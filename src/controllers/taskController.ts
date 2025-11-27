@@ -1551,6 +1551,8 @@ export const updateOccurrence = [
  *
  * Also accepts task-level assignedToIds to manage taskAssignee join rows.
  */
+// src/controllers/taskController.ts
+
 export const updateTask = [
   uploadTaskFiles,
   requireDocsFeatureIfDocOps,
@@ -1593,7 +1595,7 @@ export const updateTask = [
       const orgPrisma = await resolveOrgPrisma(req);
       const prisma = await getCorePrisma();
 
-      // Upload new task-level attachments (if your model still has them)
+      // Upload new task-level attachments
       let newTaskAttachmentKeys: string[] = [];
       try {
         if (
@@ -1617,7 +1619,7 @@ export const updateTask = [
         console.error("[updateTask] attachment upload error:", uploadErr);
       }
 
-      // Normalize assignedToIds (multi-first; fallback to single)
+      // Normalize assignedToIds
       const normalizeAssignedToIds = (v: any): string[] => {
         if (!v) return [];
         if (Array.isArray(v))
@@ -1682,6 +1684,10 @@ export const updateTask = [
         return res.status(404).json({ message: "Task not found" });
       }
 
+      // 🔍 Detect if Project or Client changed
+      const isProjectChanged = existingTask.projectId !== normalizedProjectId;
+      const isClientChanged = existingTask.clientId !== normalizedClientId;
+
       // Flags & parsing
       const updateDatesFlag =
         req.body.updateDates === true ||
@@ -1698,7 +1704,6 @@ export const updateTask = [
           : null;
 
       const parsedSimpleRule = parseRecurrenceRule(rawRecurrenceInput);
-      const ruleString: string | null = parsedSimpleRule ?? null;
 
       const wasRecurring = existingTask.isRecurring;
       const willBeRecurring = !!rawRecurrenceInput;
@@ -1751,6 +1756,7 @@ export const updateTask = [
 
       // 🔴 Recurring → Non-recurring
       if (isRecurrenceStatusChanged && !willBeRecurring) {
+        // ... (Keep existing conversion logic) ...
         await orgPrisma.$transaction(async (tx: any) => {
           await tx.task.update({
             where: { id: taskId },
@@ -1761,9 +1767,7 @@ export const updateTask = [
               description,
               startDate: newStartDate,
               dueDate: newDueDate,
-              assignedToId: assignedToIds.length
-                ? assignedToIds[0]
-                : normalizedAssignedToId, // (task scalar only if you still keep it)
+              assignedToId: assignedToIds.length ? assignedToIds[0] : normalizedAssignedToId,
               priority,
               remarks,
               status,
@@ -1781,10 +1785,8 @@ export const updateTask = [
             },
           });
 
-          // wipe all occurrences
           await tx.taskOccurrence.deleteMany({ where: { taskId } });
 
-          // ensure single occurrence (index 0)
           const occ = await tx.taskOccurrence.create({
             data: {
               taskId,
@@ -1793,9 +1795,7 @@ export const updateTask = [
               description: description ?? existingTask.description,
               startDate: newStartDate,
               dueDate: newDueDate,
-              assignedToId: assignedToIds.length
-                ? assignedToIds[0]
-                : normalizedAssignedToId ?? existingTask.assignedToId,
+              assignedToId: assignedToIds.length ? assignedToIds[0] : normalizedAssignedToId ?? existingTask.assignedToId,
               priority: priority ?? existingTask.priority,
               remarks: remarks ?? existingTask.remarks,
               status: status ?? existingTask.status,
@@ -1805,28 +1805,18 @@ export const updateTask = [
             select: { id: true },
           });
 
-          // ✅ occurrence-level assignees only
           if (assignedToIds.length) {
-            await tx.taskOccurrenceAssignee.deleteMany({
-              where: { occurrenceId: occ.id },
-            });
+            await tx.taskOccurrenceAssignee.deleteMany({ where: { occurrenceId: occ.id } });
             await tx.taskOccurrenceAssignee.createMany({
-              data: assignedToIds.map((uid) => ({
-                occurrenceId: occ.id,
-                userId: uid,
-              })),
+              data: assignedToIds.map((uid) => ({ occurrenceId: occ.id, userId: uid })),
               skipDuplicates: true,
             });
           }
         });
 
-        // Build response
         const finalTask = await orgPrisma.task.findUnique({
           where: { id: taskId },
-          include: {
-            attachments: true,
-            customValues: { include: { field: true } },
-          },
+          include: { attachments: true, customValues: { include: { field: true } } },
         });
         const attachmentsWithUrls = await Promise.all(
           (finalTask?.attachments || []).map(async (att: any) => ({
@@ -1840,34 +1830,16 @@ export const updateTask = [
           ...finalTask,
           attachments: attachmentsWithUrls,
           taskId: finalTask?.id,
-          message:
-            "Converted to non-recurring: reset occurrences to a single one.",
-          debug: { path: "R→NR branch" },
+          message: "Converted to non-recurring.",
         });
-
         
-
-        // Realtime
         const orgId = req.user.orgId;
-        req.io.to(`org:${orgId}`).emit("task:updated", {
-          orgId,
-          task: {
-            id: finalTask?.id,
-            title: finalTask?.title,
-            status: finalTask?.status,
-            priority: finalTask?.priority,
-            clientId: finalTask?.clientId,
-            projectId: finalTask?.projectId,
-            startDate: finalTask?.startDate,
-            dueDate: finalTask?.dueDate,
-          },
-        });
+        req.io.to(`org:${orgId}`).emit("task:updated", { orgId, task: { id: finalTask?.id } });
         req.io.to(`org:${orgId}`).emit("occurrence:refresh", { orgId, taskId });
-
         return;
       }
 
-      // 5) Update master task (keep task-level scalar if you still need it)
+      // 5) Update master task
       const updated = await orgPrisma.task.update({
         where: { id: taskId },
         data: {
@@ -1875,19 +1847,9 @@ export const updateTask = [
           projectId: normalizedProjectId,
           title,
           description,
-          startDate: willBeRecurring
-            ? newStartDate
-            : updateDatesFlag
-            ? newStartDate
-            : undefined,
-          dueDate: willBeRecurring
-            ? newDueDate
-            : updateDatesFlag
-            ? newDueDate
-            : undefined,
-          assignedToId: assignedToIds.length
-            ? assignedToIds[0]
-            : normalizedAssignedToId, // set or remove if you drop it
+          startDate: willBeRecurring ? newStartDate : updateDatesFlag ? newStartDate : undefined,
+          dueDate: willBeRecurring ? newDueDate : updateDatesFlag ? newDueDate : undefined,
+          assignedToId: assignedToIds.length ? assignedToIds[0] : normalizedAssignedToId,
           priority,
           remarks,
           status,
@@ -1896,10 +1858,10 @@ export const updateTask = [
           isRecurring: !!rawRecurrenceInput,
           lastGeneratedUntil: needsOccurrenceRegeneration ? null : undefined,
         },
-        include: { attachments: true }, // ❌ no task.assignees
+        include: { attachments: true },
       });
 
-      // 🔄 Custom values
+      // Custom values update
       if (Array.isArray(customValues)) {
         await orgPrisma.task.update({
           where: { id: taskId },
@@ -1915,55 +1877,54 @@ export const updateTask = [
         });
       }
 
+      // ✅ 5.5) CRITICAL FIX: Update ALL occurrences (History + Future) immediately if Project/Client changed.
+      // We do this BEFORE regeneration so that even preserved history occurrences get the new project ID.
+      if (isProjectChanged || isClientChanged) {
+         await orgPrisma.taskOccurrence.updateMany({
+           where: { taskId }, // No date filter = update everything
+           data: {
+             clientId: normalizedClientId ?? undefined,
+             projectId: normalizedProjectId ?? undefined
+           }
+         });
+      }
+
       // 6) Occurrence updates/regeneration
       if (needsOccurrenceRegeneration) {
         try {
           const freshTask = await orgPrisma.task.findUnique({
             where: { id: taskId },
           });
-          if (freshTask) {
-            const simple = parseRecurrenceRule(freshTask.recurrenceRule);
-            if (simple) {
-              await generateTaskOccurrencesSimple(orgPrisma, freshTask);
-
-              const firstOccurrence = await orgPrisma.taskOccurrence.findFirst({
-                where: { taskId },
-                include: {
-                  assignees: { select: { userId: true } },
+          if (freshTask && parseRecurrenceRule(freshTask.recurrenceRule)) {
+            await generateTaskOccurrencesSimple(orgPrisma, freshTask);
+            
+            // Notify about regeneration
+            const firstOccurrence = await orgPrisma.taskOccurrence.findFirst({
+              where: { taskId },
+              include: { assignees: { select: { userId: true } } },
+            });
+            if (firstOccurrence) {
+              await notifyCounterparties({
+                orgPrisma,
+                corePrisma: prisma,
+                io: req.io,
+                orgId: req.user.orgId,
+                actor: { id: req.user.id, role: req.user.role },
+                assigneeIds: firstOccurrence.assignees.map((a: any) => a.userId),
+                payload: {
+                  type: "TASK_UPDATED",
+                  title: `Task updated: ${freshTask.title}`,
+                  body: "Task occurrences have been regenerated",
+                  taskId: freshTask.id,
                 },
-                orderBy: { occurrenceIndex: "asc" },
               });
-
-              if (firstOccurrence) {
-                await notifyCounterparties({
-                  orgPrisma,
-                  corePrisma: prisma,
-                  io: req.io,
-                  orgId: req.user.orgId,
-                  actor: { id: req.user.id, role: req.user.role },
-                  assigneeIds: firstOccurrence.assignees.map(
-                    (a: any) => a.userId
-                  ),
-                  payload: {
-                    type: "TASK_UPDATED",
-                    title: `Task updated: ${freshTask.title}`,
-                    body: "Task occurrences have been regenerated",
-                    taskId: freshTask.id,
-                    projectId: freshTask.projectId ?? undefined,
-                  },
-                });
-              }
-            } else {
-              console.warn(
-                "[updateTask] Complex RRULE saved; generation skipped."
-              );
             }
           }
         } catch (genErr) {
           console.error("Failed to generate occurrences:", genErr);
         }
       } else {
-        // Non-regenerating paths: sync future occurrences if requested
+        // Non-regeneration logic: sync other fields to future only
         if (updated.isRecurring && updateFutureOccurrencesFlag) {
           const now = DateTime.utc().toJSDate();
 
@@ -1975,25 +1936,22 @@ export const updateTask = [
           const occIds = occsToSync.map((o: any) => o.id);
 
           if (occIds.length) {
-            // Update scalar fields
             await orgPrisma.taskOccurrence.updateMany({
               where: { id: { in: occIds } },
               data: {
                 title: title || undefined,
-                description:
-                  description !== undefined ? description : undefined,
-                assignedToId: assignedToIds.length
-                  ? assignedToIds[0]
-                  : normalizedAssignedToId ?? undefined,
+                description: description !== undefined ? description : undefined,
+                assignedToId: assignedToIds.length ? assignedToIds[0] : normalizedAssignedToId ?? undefined,
                 priority,
                 remarks,
                 status,
+                // Redundant but safe: ensure future ones are definitely synced
                 clientId: normalizedClientId ?? undefined,
                 projectId: normalizedProjectId ?? undefined,
               },
             });
 
-            // ✅ Replace occurrence-level assignees for these future occurrences
+            // Update assignees for future occurrences
             if (assignedToIds.length > 0 || normalizedAssignedToId) {
               const userIds = assignedToIds.length
                 ? assignedToIds
@@ -2005,14 +1963,7 @@ export const updateTask = [
               });
 
               if (userIds.length) {
-                const createPayload: Array<{
-                  occurrenceId: string;
-                  userId: string;
-                }> = [];
-                for (const occId of occIds) {
-                  for (const uid of userIds)
-                    createPayload.push({ occurrenceId: occId, userId: uid });
-                }
+                const createPayload = occIds.flatMap((occId:string) => userIds.map(uid => ({ occurrenceId: occId, userId: uid })));
                 const CHUNK = 500;
                 for (let i = 0; i < createPayload.length; i += CHUNK) {
                   await orgPrisma.taskOccurrenceAssignee.createMany({
@@ -2024,7 +1975,7 @@ export const updateTask = [
             }
           }
         } else if (!updated.isRecurring) {
-          // Single (occurrenceIndex:0) task: update the single occurrence too
+          // Single task: update everything on the single occurrence
           const primaryAssignedId = assignedToIds.length
             ? assignedToIds[0]
             : normalizedAssignedToId ?? null;
@@ -2045,7 +1996,7 @@ export const updateTask = [
             },
           });
 
-          // Replace join rows for that single occurrence if IDs provided
+          // Replace join rows
           if (assignedToIds.length || normalizedAssignedToId) {
             const occ = await orgPrisma.taskOccurrence.findFirst({
               where: { taskId: updated.id, occurrenceIndex: 0 },
@@ -2062,10 +2013,7 @@ export const updateTask = [
                 : [];
               if (userIds.length) {
                 await orgPrisma.taskOccurrenceAssignee.createMany({
-                  data: userIds.map((uid) => ({
-                    occurrenceId: occ.id,
-                    userId: uid,
-                  })),
+                  data: userIds.map((uid) => ({ occurrenceId: occ.id, userId: uid })),
                   skipDuplicates: true,
                 });
               }
@@ -2080,7 +2028,7 @@ export const updateTask = [
         include: {
           attachments: true,
           customValues: { include: { field: true } },
-        }, // ❌ no task.assignees
+        },
       });
       const attachmentsWithUrls = await Promise.all(
         (finalTask?.attachments || []).map(async (att: any) => ({
@@ -2091,22 +2039,21 @@ export const updateTask = [
       );
 
       const responseMessage = needsOccurrenceRegeneration
-        ? "Task updated and occurrences regenerated using simple recurrence"
+        ? "Task updated and occurrences regenerated"
         : "Task updated successfully";
 
       res.json({
         ...finalTask,
         attachments: attachmentsWithUrls,
         message: responseMessage,
-        taskAssignedToIds: [], // ✅ no task-level assignees
+        taskAssignedToIds: [],
         debug: {
           regeneratedOccurrences: needsOccurrenceRegeneration,
           changes: {
             recurrenceRule: isRecurrenceRuleChanged,
-            recurrenceStatus: isRecurrenceStatusChanged,
             startDate: isStartDateChanged,
             dueDate: isDueDateChanged,
-            endDate: isEndDateChanged,
+            projectChanged: isProjectChanged,
           },
         },
       });
