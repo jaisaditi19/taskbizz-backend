@@ -2,7 +2,7 @@ import cron from 'node-cron';
 import { prisma } from '../prisma/coreClient';
 
 // Runs every hour at minute 0 (e.g., 1:00, 2:00, 3:00 ...)
-cron.schedule('0 * * * *', async () => {
+cron.schedule('0 2 * * *', async () => {
   try {
     const deleted = await prisma.refreshToken.deleteMany({
       where: {

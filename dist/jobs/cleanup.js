@@ -6,7 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const node_cron_1 = __importDefault(require("node-cron"));
 const coreClient_1 = require("../prisma/coreClient");
 // Runs every hour at minute 0 (e.g., 1:00, 2:00, 3:00 ...)
-node_cron_1.default.schedule('0 * * * *', async () => {
+node_cron_1.default.schedule('0 2 * * *', async () => {
     try {
         const deleted = await coreClient_1.prisma.refreshToken.deleteMany({
             where: {
