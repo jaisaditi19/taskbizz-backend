@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.bulkInviteUsers = exports.deleteUser = exports.editUser = exports.getAllUsers = exports.changePassword = exports.inviteUser = exports.updateProfile = exports.getProfile = exports.updateProfileWithLogo = void 0;
+exports.bulkAssignDepartment = exports.bulkInviteUsers = exports.deleteUser = exports.editUser = exports.getAllUsers = exports.changePassword = exports.inviteUser = exports.updateProfile = exports.getProfile = exports.updateProfileWithLogo = void 0;
 const mailerSend_1 = require("../utils/mailerSend");
 const bcrypt_1 = __importDefault(require("bcrypt"));
 const container_1 = require("../di/container");
@@ -42,6 +42,18 @@ async function resolveSeatContext(req) {
         where: { orgId, status: { not: "SUSPENDED" } },
     });
     return { isTrial: sub.isTrial, licensed, used };
+}
+async function validateDepartment(prisma, departmentId, orgId) {
+    if (!departmentId)
+        return null;
+    const dept = await prisma.department.findFirst({
+        where: { id: departmentId, orgId },
+        select: { id: true },
+    });
+    if (!dept) {
+        throw new Error("INVALID_DEPARTMENT");
+    }
+    return departmentId;
 }
 const updateProfileWithLogo = async (req, res) => {
     try {
@@ -326,7 +338,7 @@ const inviteUser = async (req, res) => {
     try {
         if (!req.user)
             return res.status(401).json({ message: "Unauthorized" });
-        const { email, name, phone, address, city, state, pincode, role, panNumber, } = req.body;
+        const { email, name, phone, address, city, state, pincode, role, panNumber, departmentId } = req.body;
         if (req.user.role !== "ADMIN") {
             return res
                 .status(403)
@@ -373,6 +385,13 @@ const inviteUser = async (req, res) => {
         // Generate temp password
         const plainPassword = Math.random().toString(36).slice(-8);
         const hashedPassword = await bcrypt_1.default.hash(plainPassword, 10);
+        let safeDepartmentId = null;
+        try {
+            safeDepartmentId = await validateDepartment(prisma, departmentId, orgId);
+        }
+        catch {
+            return res.status(400).json({ message: "Invalid department" });
+        }
         const newUser = await prisma.user.create({
             data: {
                 email: normalizedEmail,
@@ -388,12 +407,14 @@ const inviteUser = async (req, res) => {
                 city: city ?? null,
                 state: state ?? null,
                 pincode: pincode ?? null,
+                departmentId: safeDepartmentId,
             },
             select: {
                 id: true,
                 email: true,
                 status: true,
                 name: true,
+                departmentId: true,
             },
         });
         await (0, mailerSend_1.sendInviteEmail)(normalizedEmail, name || "there", plainPassword);
@@ -459,6 +480,12 @@ const getAllUsers = async (req, res) => {
                 city: true,
                 state: true,
                 pincode: true,
+                department: {
+                    select: {
+                        id: true,
+                        name: true,
+                    },
+                },
             },
             orderBy: { createdAt: "desc" },
         });
@@ -482,7 +509,7 @@ const editUser = async (req, res) => {
         }
         const prisma = (0, container_1.getCorePrisma)();
         const { id } = req.params;
-        const { name, phone, role, status, address, city, state, pincode, panNumber, } = req.body;
+        const { name, phone, role, status, address, city, state, pincode, panNumber, departmentId, } = req.body;
         // Ensure target user is in same org
         const existingUser = await prisma.user.findFirst({
             where: { id: id, orgId: req.user.orgId },
@@ -494,6 +521,15 @@ const editUser = async (req, res) => {
         // if (existingUser.id === req.user.id) {
         //   return res.status(400).json({ message: "You cannot edit yourself" });
         // }
+        let safeDepartmentId = existingUser.departmentId ?? null;
+        if (departmentId !== undefined) {
+            try {
+                safeDepartmentId = await validateDepartment(prisma, departmentId, req.user.orgId);
+            }
+            catch {
+                return res.status(400).json({ message: "Invalid department" });
+            }
+        }
         const updatedUser = await prisma.user.update({
             where: { id: id },
             data: {
@@ -506,6 +542,7 @@ const editUser = async (req, res) => {
                 city: city ?? existingUser.city,
                 state: state ?? existingUser.state,
                 pincode: pincode ?? existingUser.pincode,
+                departmentId: safeDepartmentId,
             },
             select: {
                 id: true,
@@ -617,6 +654,7 @@ const bulkInviteUsers = async (req, res) => {
             const City = u.City ?? u.city ?? null;
             const State = u.State ?? u.state ?? null;
             const Pincode = u.Pincode ?? u.pincode ?? null;
+            const DepartmentId = u.DepartmentId || u.departmentId || null;
             if (!Email || !Name) {
                 results.push({
                     email: Email || null,
@@ -651,6 +689,18 @@ const bulkInviteUsers = async (req, res) => {
             // Create user with temp password
             const plainPassword = Math.random().toString(36).slice(-8);
             const hashedPassword = await bcrypt_1.default.hash(plainPassword, 10);
+            let safeDepartmentId = null;
+            try {
+                safeDepartmentId = await validateDepartment(prisma, DepartmentId, orgId);
+            }
+            catch {
+                results.push({
+                    email: Email,
+                    status: "skipped",
+                    reason: "Invalid department",
+                });
+                continue;
+            }
             const newUser = await prisma.user.create({
                 data: {
                     email: Email,
@@ -666,6 +716,7 @@ const bulkInviteUsers = async (req, res) => {
                     city: City,
                     state: State,
                     pincode: Pincode,
+                    departmentId: safeDepartmentId,
                 },
                 select: { id: true, email: true, name: true },
             });
@@ -689,3 +740,30 @@ const bulkInviteUsers = async (req, res) => {
     }
 };
 exports.bulkInviteUsers = bulkInviteUsers;
+const bulkAssignDepartment = async (req, res) => {
+    try {
+        if (!req.user || req.user.role !== "ADMIN") {
+            return res.status(403).json({ message: "Forbidden" });
+        }
+        const { userIds, departmentId } = req.body;
+        if (!Array.isArray(userIds) || userIds.length === 0) {
+            return res.status(400).json({ message: "No users selected" });
+        }
+        const prisma = (0, container_1.getCorePrisma)();
+        await prisma.user.updateMany({
+            where: {
+                id: { in: userIds },
+                orgId: req.user.orgId,
+            },
+            data: {
+                departmentId: departmentId || null,
+            },
+        });
+        return res.json({ message: "Department assigned successfully" });
+    }
+    catch (err) {
+        console.error("Bulk assign department error", err);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+exports.bulkAssignDepartment = bulkAssignDepartment;

@@ -16,4 +16,5 @@ router.get("/", auth_1.authenticate, userController_2.getAllUsers);
 router.put("/:id", auth_1.authenticate, (0, authorize_1.authorize)("ADMIN"), subscription_1.requireWriteAccess, userController_2.editUser);
 router.delete("/:id", auth_1.authenticate, (0, authorize_1.authorize)("ADMIN"), subscription_1.requireWriteAccess, userController_2.deleteUser);
 router.post("/bulk-invite", auth_1.authenticate, (0, authorize_1.authorize)("ADMIN"), subscription_1.requireWriteAccess, userController_2.bulkInviteUsers);
+router.post("/bulk-assign-department", auth_1.authenticate, (0, authorize_1.authorize)("ADMIN"), subscription_1.requireWriteAccess, userController_1.bulkAssignDepartment);
 exports.default = router;

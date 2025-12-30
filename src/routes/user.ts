@@ -1,4 +1,4 @@
-import { changePassword, updateProfileWithLogo } from './../controllers/userController';
+import { bulkAssignDepartment, changePassword, updateProfileWithLogo } from './../controllers/userController';
 import { Router } from "express";
 import { authenticate } from "../middlewares/auth";
 import {
@@ -29,6 +29,13 @@ router.get("/", authenticate,  getAllUsers);
 router.put("/:id", authenticate, authorize("ADMIN"), requireWriteAccess, editUser);
 router.delete("/:id", authenticate, authorize("ADMIN"), requireWriteAccess, deleteUser);
 router.post("/bulk-invite", authenticate, authorize("ADMIN"), requireWriteAccess, bulkInviteUsers);
+router.post(
+  "/bulk-assign-department",
+  authenticate,
+  authorize("ADMIN"),
+  requireWriteAccess,
+  bulkAssignDepartment
+);
 
 
 export default router;

@@ -36,6 +36,7 @@ const license_1 = __importDefault(require("./routes/license"));
 const integrations_1 = __importDefault(require("./routes/integrations"));
 const uploadRoutes_1 = __importDefault(require("./routes/uploadRoutes"));
 const report_1 = __importDefault(require("./routes/report"));
+const department_1 = __importDefault(require("./routes/department"));
 // Jobs / other middlewares
 require("./jobs/cleanup");
 require("./jobs/cronMailer");
@@ -128,6 +129,7 @@ app.use("/api/licenses", license_1.default);
 app.use("/api/integrations", integrations_1.default);
 app.use("/api/uploads", uploadRoutes_1.default);
 app.use("/api/reports", report_1.default);
+app.use("/api/departments", department_1.default);
 // ---------- Start server & graceful shutdown ----------
 const PORT = process.env.PORT || 8080;
 initPrismaAndFactories()

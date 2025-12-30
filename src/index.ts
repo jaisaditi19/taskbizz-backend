@@ -33,6 +33,7 @@ import licenseRoutes from "./routes/license";
 import integrationsRouter from "./routes/integrations";
 import uploadRoutes from "./routes/uploadRoutes";
 import reportRoutes from "./routes/report";
+import deparmentRoutes from "./routes/department";
 
 // Jobs / other middlewares
 import "./jobs/cleanup";
@@ -165,6 +166,7 @@ app.use("/api/licenses", licenseRoutes);
 app.use("/api/integrations", integrationsRouter);
 app.use("/api/uploads", uploadRoutes);
 app.use("/api/reports", reportRoutes);
+app.use("/api/departments", deparmentRoutes);
 
 // ---------- Start server & graceful shutdown ----------
 const PORT = process.env.PORT || 8080;
