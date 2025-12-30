@@ -1,6 +1,17 @@
 import { Request, Response } from "express";
 import { getCorePrisma, getOrgPrisma } from "../di/container";
 
+type EmployeeRow = {
+  id: string;
+  name: string;
+  departmentId: string | null;
+  department: {
+    id: string;
+    name: string;
+  } | null;
+};
+
+
 export const getEmployeeSummaryReport = async (
   req: Request & { user?: any },
   res: Response
@@ -49,10 +60,21 @@ export const getEmployeeSummaryReport = async (
 
     /* ---------------- EMPLOYEES ---------------- */
 
-    const employees = await corePrisma.user.findMany({
+    const employees: EmployeeRow[] = await corePrisma.user.findMany({
       where: { orgId: req.user.orgId },
-      select: { id: true, name: true },
+      select: {
+        id: true,
+        name: true,
+        departmentId: true,
+        department: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
     });
+
 
     /* ---------------- TASK OCCURRENCES (MATCH DASHBOARD) ---------------- */
 
@@ -93,6 +115,8 @@ export const getEmployeeSummaryReport = async (
       {
         userId: string;
         name: string;
+        departmentId: string | null;
+        departmentName: string | null;
         assigned: number;
         completed: number;
         overdue: number;
@@ -104,6 +128,8 @@ export const getEmployeeSummaryReport = async (
       summaryMap.set(e.id, {
         userId: e.id,
         name: e.name,
+        departmentId: e.departmentId ?? null,
+        departmentName: e.department?.name ?? null,
         assigned: 0,
         completed: 0,
         overdue: 0,
@@ -158,6 +184,8 @@ export const getEmployeeSummaryReport = async (
     const rows = Array.from(summaryMap.values()).map((r) => ({
       userId: r.userId,
       name: r.name,
+      departmentId: r.departmentId,
+      departmentName: r.departmentName,
       assigned: r.assigned,
       completed: r.completed,
       overdue: r.overdue,

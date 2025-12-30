@@ -38,7 +38,17 @@ const getEmployeeSummaryReport = async (req, res) => {
         /* ---------------- EMPLOYEES ---------------- */
         const employees = await corePrisma.user.findMany({
             where: { orgId: req.user.orgId },
-            select: { id: true, name: true },
+            select: {
+                id: true,
+                name: true,
+                departmentId: true,
+                department: {
+                    select: {
+                        id: true,
+                        name: true,
+                    },
+                },
+            },
         });
         /* ---------------- TASK OCCURRENCES (MATCH DASHBOARD) ---------------- */
         const rawOccurrences = await orgPrisma.taskOccurrence.findMany({
@@ -73,6 +83,8 @@ const getEmployeeSummaryReport = async (req, res) => {
             summaryMap.set(e.id, {
                 userId: e.id,
                 name: e.name,
+                departmentId: e.departmentId ?? null,
+                departmentName: e.department?.name ?? null,
                 assigned: 0,
                 completed: 0,
                 overdue: 0,
@@ -118,6 +130,8 @@ const getEmployeeSummaryReport = async (req, res) => {
         const rows = Array.from(summaryMap.values()).map((r) => ({
             userId: r.userId,
             name: r.name,
+            departmentId: r.departmentId,
+            departmentName: r.departmentName,
             assigned: r.assigned,
             completed: r.completed,
             overdue: r.overdue,
