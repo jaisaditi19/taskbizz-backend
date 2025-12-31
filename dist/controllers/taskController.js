@@ -1855,7 +1855,7 @@ async function listTasksByProject(req, res) {
 async function updateOccurrenceStatus(req, res) {
     try {
         const occurrenceId = req.params.id;
-        const { status } = req.body;
+        const { status, scope = "SINGLE" } = req.body;
         if (!status) {
             return res.status(400).json({ message: "status is required" });
         }
@@ -1884,6 +1884,34 @@ async function updateOccurrenceStatus(req, res) {
         });
         if (!beforeUpdate) {
             return res.status(404).json({ message: "Occurrence not found" });
+        }
+        // 🔴 SPECIAL CASE: CANCELLED + FUTURE
+        if (status === "CANCELLED" && scope === "FUTURE") {
+            await orgPrisma.taskOccurrence.updateMany({
+                where: {
+                    taskId: beforeUpdate.taskId,
+                    startDate: {
+                        gte: beforeUpdate.startDate, // current + future only
+                    },
+                },
+                data: {
+                    status: "CANCELLED",
+                    isCompleted: false,
+                    completedAt: null,
+                },
+            });
+            // emit once (frontend will refetch anyway)
+            req.io.to(`org:${req.user.orgId}`).emit("occurrence:status", {
+                orgId: req.user.orgId,
+                taskId: beforeUpdate.taskId,
+                scope: "FUTURE",
+                status: "CANCELLED",
+            });
+            return res.json({
+                ok: true,
+                scope: "FUTURE",
+                status: "CANCELLED",
+            });
         }
         const previousStatus = beforeUpdate.status;
         const statusChanged = status !== previousStatus;
