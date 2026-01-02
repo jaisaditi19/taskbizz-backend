@@ -904,7 +904,7 @@ async function listTaskOccurrences(req, res) {
             });
         }
         // Cursor pagination (startDate ASC, id ASC)
-        const take = Math.min(2000, Math.max(1, Number.isFinite(Number(limit)) ? Number(limit) : 500)) || 500;
+        const take = Math.min(3000, Math.max(1, Number.isFinite(Number(limit)) ? Number(limit) : 500)) || 500;
         const c = decodeCursor(nextCursor);
         if (c) {
             const sd = luxon_1.DateTime.fromISO(c.sd, { zone: "utc" });

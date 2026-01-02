@@ -1010,7 +1010,7 @@ export async function listTaskOccurrences(
     // Cursor pagination (startDate ASC, id ASC)
     const take =
       Math.min(
-        2000,
+        3000,
         Math.max(1, Number.isFinite(Number(limit)) ? Number(limit) : 500)
       ) || 500;
 
