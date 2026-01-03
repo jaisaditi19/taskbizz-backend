@@ -4,7 +4,8 @@ exports.getEmployeeSummaryReport = void 0;
 const container_1 = require("../di/container");
 const getEmployeeSummaryReport = async (req, res) => {
     const corePrisma = (0, container_1.getCorePrisma)();
-    if (!req.user?.orgId || req.user.role !== "ADMIN") {
+    if (!req.user?.orgId ||
+        (req.user.role !== "ADMIN" && req.user.role !== "MANAGER")) {
         return res.status(403).json({ message: "Forbidden" });
     }
     const { start: startStr, end: endStr } = req.query;

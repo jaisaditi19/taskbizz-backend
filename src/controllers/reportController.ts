@@ -18,7 +18,10 @@ export const getEmployeeSummaryReport = async (
 ) => {
   const corePrisma = getCorePrisma();
 
-  if (!req.user?.orgId || req.user.role !== "ADMIN") {
+  if (
+    !req.user?.orgId ||
+    (req.user.role !== "ADMIN" && req.user.role !== "MANAGER")
+  ) {
     return res.status(403).json({ message: "Forbidden" });
   }
 
