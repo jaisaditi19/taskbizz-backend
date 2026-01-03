@@ -838,6 +838,20 @@ async function listTaskOccurrences(req, res) {
         // Date window (always defined now)
         AND.push({ startDate: { lte: windowEnd } });
         AND.push({ dueDate: { gte: windowStart } });
+        // Duration filter (derived from dueDate)
+        const durationMin = req.query.durationMin;
+        const durationMax = req.query.durationMax;
+        if (durationMin || durationMax) {
+            const todayUTC = luxon_1.DateTime.utc();
+            if (durationMin) {
+                const minDue = todayUTC.plus({ days: Number(durationMin) }).toJSDate();
+                AND.push({ dueDate: { gte: minDue } });
+            }
+            if (durationMax) {
+                const maxDue = todayUTC.plus({ days: Number(durationMax) }).toJSDate();
+                AND.push({ dueDate: { lte: maxDue } });
+            }
+        }
         // Status
         const VALID_STATUSES = [
             "OPEN",
@@ -861,6 +875,13 @@ async function listTaskOccurrences(req, res) {
         else {
             // DEFAULT: show all active (exclude completed/cancelled)
             AND.push({ NOT: { status: { in: ["COMPLETED", "CANCELLED"] } } });
+        }
+        // Priority
+        const priorityVals = toList(req.query.priority);
+        if (priorityVals?.length) {
+            AND.push({
+                priority: { in: priorityVals.map((p) => String(p).toUpperCase()) },
+            });
         }
         // Assignee
         const assignedVals = toList(assignedTo);
@@ -890,6 +911,17 @@ async function listTaskOccurrences(req, res) {
                     { projectId: { in: projectVals } },
                     { task: { projectId: { in: projectVals } } },
                 ],
+            });
+        }
+        // Manager filter (from UI dropdown)
+        const managerVals = toList(req.query.managerId);
+        if (managerVals?.length) {
+            AND.push({
+                task: {
+                    project: {
+                        head: { in: managerVals },
+                    },
+                },
             });
         }
         // Search
