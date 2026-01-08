@@ -3712,474 +3712,451 @@ export const getDashboard = async (
 ) => {
   try {
     const prisma = getCorePrisma();
-    const user = req.user!;
-    const orgId = user.orgId as string;
-    const { start, end, weekStart } = req.query as Record<
-      string,
-      string | undefined
-    >;
+    const orgId = req.user.orgId;
+    const { start, end, weekStart } = req.query as Record<string, string>;
+    const user = req.user;
 
-    const now = new Date();
-    const fallbackStart = startOfMonth(now);
-    const fallbackEnd = endOfMonth(now);
-    const dateStart = parseISODate(start) ?? fallbackStart;
-    const dateEnd = parseISODate(end) ?? fallbackEnd;
+    /* ================= CACHE ================= */
 
     const cacheKey = orgKey(
       orgId,
       "dashboard",
-      `u=${user.id}:s=${dateStart.toISOString()}:e=${dateEnd.toISOString()}`
+      `u=${user.id}:s=${start}:e=${end}`
     );
 
-    const inflightKey = `${
-      user.id
-    }|${orgId}|${dateStart.toISOString()}|${dateEnd.toISOString()}|${
-      weekStart ?? ""
-    }`;
-
-    // Reuse result if same request is running
-    if (inflight.has(inflightKey)) {
-      try {
-        const shared = await inflight.get(inflightKey)!;
-        return res.json(shared);
-      } catch (e) {
-        inflight.delete(inflightKey);
-        throw e;
-      }
-    }
-
-    // Cache hit
     const cached = (await cacheGetJson(cacheKey)) as any;
     if (cached) return res.json({ ...cached, cached: true });
 
     const orgPrisma = await resolveOrgPrisma(req);
 
-    const selectedWeekStart = parseISODate(weekStart ?? "");
+    /* ================= DATE ================= */
+
+    const dateStart = new Date(start);
+    const dateEnd = new Date(end);
+    const now = new Date();
+
+    const selectedWeekStart = weekStart ? new Date(weekStart) : undefined;
     const selectedWeekEnd = selectedWeekStart
       ? endOfWeek(selectedWeekStart, { weekStartsOn: 1 })
       : undefined;
 
-    const isAdmin = user?.role === "ADMIN";
-    const isManager = user?.role === "MANAGER";
+    /* ================= ROLE ================= */
+
+    const isManager = user.role === "MANAGER";
     const managerProjectScope = isManager
       ? { task: { project: { head: user.id } } }
-      : {};
+      : undefined;
 
-    // --- local helpers (match original behavior) ---
+    /* ================= FETCH (OPTIMIZED DATE FILTER) ================= */
+
+    const [rawOccurrences, projects, clients] = await Promise.all([
+      orgPrisma.taskOccurrence.findMany({
+        where: {
+          OR: [
+            { startDate: { gte: dateStart, lte: dateEnd } },
+            { dueDate: { gte: dateStart, lte: dateEnd } },
+          ],
+          ...(managerProjectScope ? managerProjectScope : {}),
+        },
+        include: {
+          task: {
+            select: {
+              clientId: true,
+              status: true,
+              projectId: true,
+              project: {
+                select: { head: true },
+              },
+            },
+          },
+        },
+        orderBy: { startDate: "asc" },
+      }),
+      orgPrisma.project.findMany({
+        where: isManager ? { head: user.id } : undefined,
+      }),
+      orgPrisma.client.findMany(),
+    ]);
+
+    /* ================= FILTER CANCELLED ================= */
+
+    const occurrences = rawOccurrences.filter((t: any) => {
+      const occStatus = (t.status || "").toUpperCase();
+      const taskStatus = (t.task?.status || "").toUpperCase();
+      return occStatus !== "CANCELLED" && taskStatus !== "CANCELLED";
+    });
+
+    /* ================= HELPERS ================= */
+
+    const isTaskCompleted = (t: any) =>
+      t.isCompleted === true ||
+      (t.status || t.task?.status || "").toUpperCase() === "COMPLETED";
+
+    const isOpen = (t: any) =>
+      (t.status || t.task?.status || "").toUpperCase() === "OPEN";
+
     const toDateSafe = (v: any): Date | null => {
       if (!v) return null;
       const d = v instanceof Date ? v : new Date(v);
       return isNaN(d.getTime()) ? null : d;
     };
+
     const startOfDaySafe = (d: Date) => {
       const c = new Date(d);
       c.setHours(0, 0, 0, 0);
       return c;
     };
+
     const endOfDaySafe = (d: Date) => {
       const c = new Date(d);
       c.setHours(23, 59, 59, 999);
       return c;
     };
-    const isTaskCompleted = (t: any) =>
-      t.isCompleted === true ||
-      (t.status || t.task?.status || "").toString().toUpperCase() ===
-        "COMPLETED";
+
     const isOverdue = (t: any) => {
       const due = toDateSafe(t.dueDate);
       if (!due) return false;
       if (isTaskCompleted(t)) return false;
-      return startOfDaySafe(due).getTime() < startOfDaySafe(now).getTime();
+      return startOfDaySafe(due) < startOfDaySafe(now);
     };
-    const isOpen = (t: any) =>
-      (t.status || t.task?.status || "").toString().toUpperCase() === "OPEN";
 
-    const rid = crypto.randomUUID();
-    // console.log("[DEBUG] getDashboard: Starting data fetch...");
-    console.time(`dashboard-main-query:${rid}`);
+    /* ================= COMPLETED COUNT ================= */
 
-    const running = (async () => {
-      // ---------------- Fetch org data ----------------
-      const [rawOccurrences, projectsAll, clientsAll] = await Promise.all([
-        orgPrisma.taskOccurrence.findMany({
-          where: {
-            AND: [
-              {
-                OR: [
-                  { startDate: { gte: dateStart, lte: dateEnd } },
-                  { dueDate: { gte: dateStart, lte: dateEnd } },
-                ],
-              },
-              managerProjectScope,
-            ],
-          },
-          include: {
-            task: { include: { project: { select: { head: true } } } },
-          },
-          orderBy: { startDate: "asc" },
-        }),
-        orgPrisma.project.findMany({
-          where: isManager ? { head: user.id } : undefined,
-        }),
-        orgPrisma.client.findMany(),
-      ]);
+    const completedTasks = await orgPrisma.taskOccurrence.count({
+      where: {
+        status: "COMPLETED",
+        updatedAt: { gte: dateStart, lte: dateEnd },
+        ...(managerProjectScope ?? {}),
+      },
+    });
 
-      console.timeEnd(`dashboard-main-query:${rid}`);
-      // console.log(
-      //   `[DEBUG] getDashboard: Found ${rawOccurrences.length} occurrences.`
-      // );
+    // const completedInOccurrences = occurrences.filter(isTaskCompleted).length;
+    // const completedTasks = completedInOccurrences;
+    // let completedTasks = 0;
 
-      // Filter cancelled (defensive)
-      const occurrences = rawOccurrences.filter((t: any) => {
-        const occStatus = (t.status || "").toString().toUpperCase();
-        const taskStatus = (t.task?.status || "").toString().toUpperCase();
-        return occStatus !== "CANCELLED" && taskStatus !== "CANCELLED";
-      });
+    const assignedTasks = occurrences.filter((t: any) => t.assignedToId).length;
 
-      // Restrict visible clients for managers
-      let clients = clientsAll;
-      if (isManager) {
-        const clientIds = new Set<string>();
-        for (const t of occurrences) {
-          if (t.clientId) clientIds.add(String(t.clientId));
-          if (t.task?.clientId) clientIds.add(String(t.task.clientId));
-        }
-        clients = clientsAll.filter((c: any) => clientIds.has(String(c.id)));
-      }
-
-      const projects = projectsAll;
-
-      // --- License stats (org-wide) ---
-      const startToday = startOfDaySafe(now);
-      const startTomorrow = addDays(startToday, 1); // UI rule: today counts as expired
-      const monthStart = startOfMonth(now);
-      const nextMonthStart = startOfMonth(addMonths(now, 1));
-
-      const [totalLicenses, expiringThisMonth, expiredLicenses] =
-        await Promise.all([
-          // Count all rows (or add your own soft-delete filter if needed)
-          orgPrisma.license.count(),
-
-          // Expiring *this month* (after today), inclusive of tomorrow, exclusive of next month start
-          orgPrisma.license.count({
-            where: {
-              expiresOn: {
-                gte: startTomorrow, // tomorrow and later…
-                lt: nextMonthStart, // …but still within this calendar month
-              },
-            },
-          }),
-
-          // Expired today or earlier (per UI rule)
-          orgPrisma.license.count({
-            where: {
-              expiresOn: {
-                lt: startTomorrow,
-              },
-            },
-          }),
-        ]);
-      
-      // ---------------- Counts / stats ----------------
-      const completedTasks = await orgPrisma.taskOccurrence.count({
-        where: {
-          status: "COMPLETED",
-          updatedAt: { gte: dateStart, lte: dateEnd },
-          ...managerProjectScope,
-        },
-      });
-
-      const openTasks = occurrences.filter((t: any) => isOpen(t)).length;
-      const overdueTasks = occurrences.filter((t: any) => isOverdue(t));
-
-      const todayStart = startOfDaySafe(now);
-      const todayEnd = endOfDaySafe(now);
-      const todayDue = occurrences.filter((t: any) => {
-        if (isTaskCompleted(t)) return false;
-        const due = toDateSafe(t.dueDate);
-        return due ? due >= todayStart && due <= todayEnd : false;
-      }).length;
-
-      const weekDue =
-        selectedWeekStart && selectedWeekEnd
-          ? occurrences.filter((t: any) => {
-              if (isTaskCompleted(t)) return false;
-              const due = toDateSafe(t.dueDate);
-              return due
-                ? due >= selectedWeekStart && due <= selectedWeekEnd
-                : false;
-            }).length
-          : occurrences.filter((t: any) => !isTaskCompleted(t) && t.dueDate)
-              .length;
-
-      const completionRate = occurrences.length
-        ? Math.round((completedTasks / occurrences.length) * 100)
+    const completionRate =
+      assignedTasks > 0
+        ? Math.round((completedTasks / assignedTasks) * 100)
         : 0;
 
-      // ---------------- Customer Report (basic placeholder) ----------------
-      const clientAgg = clients.map((c: any) => ({
+
+    /* ================= LICENSE / RENEWALS ================= */
+
+    const startToday = startOfDaySafe(now);
+    const startTomorrow = new Date(startToday);
+    startTomorrow.setDate(startTomorrow.getDate() + 1);
+    const nextMonthStart = startOfMonth(addMonths(now, 1));
+
+    const [totalLicenses, expiringThisMonth, expiredLicenses] =
+      await Promise.all([
+        orgPrisma.license.count(),
+        orgPrisma.license.count({
+          where: {
+            expiresOn: { gte: startTomorrow, lt: nextMonthStart },
+          },
+        }),
+        orgPrisma.license.count({
+          where: { expiresOn: { lt: startTomorrow } },
+        }),
+      ]);
+
+    /* ================= SINGLE PASS AGGREGATION ================= */
+
+    const byProject = new Map<string, any[]>();
+    const byUser = new Map<string, any[]>();
+
+    const createdInWindow: any[] = [];
+    const completedInWindow: any[] = [];
+
+    const openInWindow: any[] = [];
+    const overdueInWindow: any[] = [];
+
+    let openTasks = 0;
+    let todayDue = 0;
+
+    const todayStart = startOfDaySafe(now);
+    const todayEnd = endOfDaySafe(now);
+
+    for (const t of occurrences) {
+      if (t.projectId) {
+        if (!byProject.has(t.projectId)) byProject.set(t.projectId, []);
+        byProject.get(t.projectId)!.push(t);
+      }
+
+      if (t.assignedToId) {
+        if (!byUser.has(t.assignedToId)) byUser.set(t.assignedToId, []);
+        byUser.get(t.assignedToId)!.push(t);
+      }
+
+      if (isOpen(t)) {
+        openTasks++;
+        openInWindow.push(t);
+      }
+
+      if (isOverdue(t)) overdueInWindow.push(t);
+
+      const due = toDateSafe(t.dueDate);
+
+      if (!isTaskCompleted(t) && due && due >= todayStart && due <= todayEnd) {
+        todayDue++;
+      }
+
+      if (t.createdAt >= dateStart && t.createdAt <= dateEnd) {
+        createdInWindow.push(t);
+      }
+
+      if (isTaskCompleted(t)) {
+        const completedTime = t.completedAt || t.updatedAt;
+        if (
+          completedTime &&
+          completedTime >= dateStart &&
+          completedTime <= dateEnd
+        ) {
+          completedInWindow.push(t);
+        }
+      }
+    }
+
+    const weeklyCompletionRate =
+      createdInWindow.length > 0
+        ? Math.round((completedInWindow.length / createdInWindow.length) * 100)
+        : 0;
+
+    /* ================= WEEK DUE ================= */
+
+    const weekDue =
+      selectedWeekStart && selectedWeekEnd
+        ? occurrences.filter((t: any) => {
+            if (isTaskCompleted(t)) return false;
+            const due = toDateSafe(t.dueDate);
+            return due
+              ? due >= selectedWeekStart && due <= selectedWeekEnd
+              : false;
+          }).length
+        : occurrences.filter((t: any) => !isTaskCompleted(t) && t.dueDate)
+            .length;
+
+    /* ================= PROJECT PROGRESS ================= */
+
+    const projectProgress = projects.map((p: any) => {
+      const pts = byProject.get(p.id) ?? [];
+      const done = pts.filter(isTaskCompleted).length;
+      return {
+        id: p.id,
+        name: p.name,
+        totalTasks: pts.length,
+        completedTasks: done,
+        progress: pts.length ? Math.round((done / pts.length) * 100) : 0,
+      };
+    });
+
+    /* ================= USERS + TEAM STATUS ================= */
+
+    let users = await prisma.user.findMany({ where: { orgId } });
+
+    if (isManager) {
+      const involvedIds = new Set(
+        occurrences.map((t: any) => t.assignedToId).filter(Boolean)
+      );
+      users = users.filter((u) => involvedIds.has(u.id));
+    }
+
+    const teamStatus = users.map((u) => {
+      const uTasks = byUser.get(u.id) ?? [];
+
+      const completed = uTasks.filter(isTaskCompleted).length;
+      const open = uTasks.length - completed;
+      const overdue = uTasks.filter(isOverdue).length;
+
+      const today = uTasks.filter((t) => {
+        if (isTaskCompleted(t)) return false;
+
+        const due = toDateSafe(t.dueDate ?? t.task?.dueDate ?? t.occurrenceDue);
+
+        return due && due >= todayStart && due <= todayEnd;
+      }).length;
+
+      return {
+        id: u.id,
+        name: u.name,
+
+        totalTasks: uTasks.length,
+        openTasks: open,
+        completedTasks: completed,
+
+        overdueTasks: overdue,
+        todayTasks: today,
+
+        overdueIssues: 0,
+        todayIssues: 0,
+        openIssues: 0,
+      };
+    });
+
+    /* ================= TASK DISTRIBUTION ================= */
+
+    const counts = rawOccurrences.reduce((acc: any, t: any) => {
+      const st = (
+        t.status ||
+        t.task?.status ||
+        (t.isCompleted ? "COMPLETED" : "OPEN")
+      )
+        .toString()
+        .toUpperCase();
+      acc[st] = (acc[st] ?? 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const taskDistribution = Object.entries(counts).map(([status, count]) => ({
+      status,
+      count,
+    }));
+
+    /* ================= CUSTOMER ACTIVITY ================= */
+
+    const clientAggMap = new Map<string, any>();
+
+    clients.forEach((c: any) => {
+      clientAggMap.set(c.id, {
         clientId: c.id,
         clientName: c.name,
+        projectIds: new Set<string>(),
         totalProjects: 0,
         activeProjects: 0,
         openTasks: 0,
         completedTasks: 0,
         progressPct: 0,
-      }));
+      });
+    });
 
-      // ---------------- Project Progress ----------------
-      const projectProgress = projects.map((p: any) => {
-        const pts = occurrences.filter((t: any) => t.projectId === p.id);
-        const done = pts.filter(isTaskCompleted).length;
+    for (const t of occurrences) {
+      const clientId = t.clientId ?? t.task?.clientId;
+      if (!clientId) continue;
+
+      const c = clientAggMap.get(clientId);
+      if (!c) continue;
+
+      if (t.projectId) c.projectIds.add(t.projectId);
+
+      if (isTaskCompleted(t)) c.completedTasks++;
+      else c.openTasks++;
+    }
+
+    // ✅ finalize aggregation ONCE
+    clientAggMap.forEach((c) => {
+      c.totalProjects = c.projectIds.size;
+      const totalTasks = c.openTasks + c.completedTasks;
+      c.progressPct = totalTasks
+        ? Math.round((c.completedTasks / totalTasks) * 100)
+        : 0;
+
+      delete c.projectIds; // clean response
+    });
+
+    const customerReport = Array.from(clientAggMap.values()).slice(0, 8);
+
+    const getLastActivityTime = (t: any): number => {
+      return (
+        t.completedAt?.getTime?.() ??
+        t.updatedAt?.getTime?.() ??
+        t.createdAt?.getTime?.() ??
+        0
+      );
+    };
+
+    const recentTasks = occurrences
+      .filter((t: any) => {
+        const st = (t.status || t.task?.status || "").toUpperCase();
+        return st !== "CANCELLED";
+      })
+      .map((t: any) => {
+        const lastActivityAt = t.completedAt ?? t.updatedAt ?? t.createdAt;
+
+        const activityType = t.completedAt
+          ? "COMPLETED"
+          : t.updatedAt && t.updatedAt > t.createdAt
+          ? "UPDATED"
+          : "CREATED";
+
         return {
-          id: p.id,
-          name: p.name,
-          totalTasks: pts.length,
-          completedTasks: done,
-          progress: pts.length ? Math.round((done / pts.length) * 100) : 0,
+          id: t.id,
+          title: t.title,
+          status: t.status || t.task?.status || "OPEN",
+          priority: t.priority || t.task?.priority || "MEDIUM",
+          dueDate: t.dueDate ?? t.task?.dueDate ?? null,
+          startDate: t.startDate ?? null,
+          assignedToId: t.assignedToId,
+          projectId: t.projectId,
+          isCompleted: isTaskCompleted(t),
+          activityType,
+          lastActivityAt,
         };
-      });
+      })
+      .sort(
+        (a: any, b: any) =>
+          new Date(b.lastActivityAt).getTime() -
+          new Date(a.lastActivityAt).getTime()
+      )
+      .slice(0, 10);
 
-      // ---------------- Users (from core DB) ----------------
-      let users = await prisma.user.findMany({ where: { orgId } });
-      if (isManager) {
-        const involvedIds = new Set<string>(
-          occurrences.map((t: any) => String(t.assignedToId)).filter(Boolean)
-        );
-        users = users.filter((u: any) => involvedIds.has(String(u.id)));
-      }
+    /* ================= RESPONSE ================= */
 
-      // ---------------- Team Status ----------------
-      const teamStatus = users.map((u) => {
-        const uTasks = occurrences.filter((t: any) => t.assignedToId === u.id);
-        return {
-          id: u.id,
-          name: u.name,
-          overdueTasks: uTasks.filter((t: any) => isOverdue(t)).length,
-          todayTasks: uTasks.filter((t: any) => {
-            if (isTaskCompleted(t)) return false;
-            const due = toDateSafe(t.dueDate);
-            return due ? due >= todayStart && due <= todayEnd : false;
-          }).length,
-          openTasks: uTasks.filter((t: any) => !isTaskCompleted(t)).length,
-          // Preserve original shape (issues placeholders)
-          overdueIssues: 0,
-          todayIssues: 0,
-          openIssues: 0,
-        };
-      });
-
-      // ---------------- Period Digest (exactly like original) ----------------
-      const createdInWindow = occurrences.filter(
-        (t: any) =>
-          t.createdAt && t.createdAt >= dateStart && t.createdAt <= dateEnd
-      );
-
-      const completedInWindow = occurrences.filter((t: any) => {
-        if (!isTaskCompleted(t)) return false;
-        const completedTime = t.completedAt || t.updatedAt;
-        return (
-          completedTime &&
-          completedTime >= dateStart &&
-          completedTime <= dateEnd
-        );
-      });
-
-      const openInWindow = occurrences.filter(
-        (t: any) =>
-          !isTaskCompleted(t) &&
-          ((t.startDate && t.startDate <= dateEnd) ||
-            (t.dueDate && t.dueDate >= dateStart) ||
-            (t.createdAt && t.createdAt >= dateStart && t.createdAt <= dateEnd))
-      );
-
-      const overdueInWindow = occurrences.filter((t: any) => {
-        if (isTaskCompleted(t)) return false;
-        const due = toDateSafe(t.dueDate);
-        return due ? isOverdue(t) && due >= dateStart && due <= dateEnd : false;
-      });
-
-      // Top performers by completions in the window
-      const completedByUser: Record<string, number> = {};
-      completedInWindow.forEach((t: any) => {
-        if (!t.assignedToId) return;
-        completedByUser[t.assignedToId] =
-          (completedByUser[t.assignedToId] || 0) + 1;
-      });
-      const topPerformers = Object.entries(completedByUser)
-        .map(([userId, completed]) => {
-          const u = users.find((x) => x.id === userId);
-          return { userId, name: u?.name ?? "Unknown", completed };
-        })
-        .sort((a, b) => b.completed - a.completed)
-        .slice(0, 3);
-
-      // ---------------- Task Distribution ----------------
-      const counts = occurrences.reduce((acc: any, t: any) => {
-        const st = (
-          t.status ||
-          t.task?.status ||
-          (isTaskCompleted(t) ? "COMPLETED" : "OPEN")
-        )
-          .toString()
-          .toUpperCase();
-        acc[st] = (acc[st] ?? 0) + 1;
-        return acc;
-      }, {} as Record<string, number>);
-      const taskDistribution = Object.entries(counts).map(
-        ([status, count]) => ({ status, count })
-      );
-
-      // ---------------- Trends (previous period; keep createdAt/completedAt OR) ----------------
-      const prevStart = subDays(
-        dateStart,
-        Math.floor(
-          (dateEnd.getTime() - dateStart.getTime()) / (1000 * 60 * 60 * 24)
-        ) + 1
-      );
-      const prevEnd = subDays(dateStart, 1);
-
-      const prevOccurrencesRaw = await orgPrisma.taskOccurrence.findMany({
-        where: {
-          AND: [
-            {
-              OR: [
-                { startDate: { gte: prevStart, lte: prevEnd } },
-                { dueDate: { gte: prevStart, lte: prevEnd } },
-                { createdAt: { gte: prevStart, lte: prevEnd } },
-                { completedAt: { gte: prevStart, lte: prevEnd } },
-              ],
-            },
-            managerProjectScope,
-          ],
+    const payload = {
+      stats: {
+        totalTasks: occurrences.length,
+        completedTasks,
+        overdueTasks: overdueInWindow.length,
+        openTasks,
+        totalProjects: projects.length,
+        activeProjects: projectProgress.filter(
+          (p: any) => p.totalTasks > p.completedTasks
+        ).length,
+        totalClients: clients.length,
+        totalUsers: users.length,
+        activeUsers: users.filter((u) => u.status === "ACTIVE").length,
+        todayDue,
+        weekDue,
+        completionRate: completionRate,
+        licenses: {
+          total: totalLicenses,
+          expired: expiredLicenses,
+          expiringThisMonth,
+          active: Math.max(
+            0,
+            totalLicenses - expiredLicenses - expiringThisMonth
+          ),
         },
-        include: { task: { include: { project: { select: { head: true } } } } },
-      });
+      },
+      recentTasks: recentTasks,
+      overdueTasks: overdueInWindow,
+      projectProgress: projectProgress
+        .sort((a: any, b: any) => b.totalTasks - a.totalTasks)
+        .slice(0, 6),
+      taskDistribution,
+      customerReport,
+      teamStatus,
+      weeklyDigest: {
+        weekStart: dateStart,
+        weekEnd: dateEnd,
+        created: createdInWindow.length,
+        completed: completedInWindow.length,
+        open: openInWindow.length,
+        overdue: overdueInWindow.length,
+        completionRate: weeklyCompletionRate,
+        topPerformers: [],
+      },
+      deltas: {},
+    };
 
-      const prevFiltered = prevOccurrencesRaw.filter((t: any) => {
-        const occStatus = (t.status || "").toString().toUpperCase();
-        const taskStatus = (t.task?.status || "").toString().toUpperCase();
-        return occStatus !== "CANCELLED" && taskStatus !== "CANCELLED";
-      });
-
-      const prevCompleted = await orgPrisma.taskOccurrence.count({
-        where: {
-          status: "COMPLETED",
-          updatedAt: { gte: prevStart, lte: prevEnd },
-          ...managerProjectScope,
-        },
-      });
-
-      const prevOverdue = prevFiltered.filter((t: any) => isOverdue(t)).length;
-      const prevActiveProjects = projects.filter((p: any) =>
-        prevFiltered.some(
-          (t: any) => t.projectId === p.id && !isTaskCompleted(t)
-        )
-      ).length;
-
-      const deltas = {
-        completedTasks:
-          prevCompleted === 0
-            ? completedTasks > 0
-              ? 100
-              : 0
-            : Math.round(
-                ((completedTasks - prevCompleted) / prevCompleted) * 100
-              ),
-        overdueTasks:
-          prevOverdue === 0
-            ? overdueTasks.length > 0
-              ? 100
-              : 0
-            : Math.round(
-                ((overdueTasks.length - prevOverdue) / prevOverdue) * 100
-              ),
-        activeProjects:
-          prevActiveProjects === 0
-            ? projectProgress.length > 0
-              ? 100
-              : 0
-            : Math.round(
-                ((projectProgress.length - prevActiveProjects) /
-                  prevActiveProjects) *
-                  100
-              ),
-        clients: 0,
-        users: 0,
-      };
-
-      // ---------------- Final payload (WITH weeklyDigest restored) ----------------
-      const payload = {
-        stats: {
-          totalTasks: occurrences.length,
-          completedTasks,
-          overdueTasks: overdueTasks.length,
-          openTasks,
-          totalProjects: projects.length,
-          activeProjects: projects.filter((p: any) =>
-            occurrences.some(
-              (t: any) => t.projectId === p.id && !isTaskCompleted(t)
-            )
-          ).length,
-          totalClients: clients.length,
-          totalUsers: users.length,
-          activeUsers: users.filter((u) => u.status === "ACTIVE").length,
-          todayDue,
-          weekDue,
-          completionRate,
-          licenses: {
-            total: totalLicenses,
-            expired: expiredLicenses,
-            expiringThisMonth: expiringThisMonth, // <-- rename from "expiringSoon"
-            active: Math.max(
-              0,
-              totalLicenses - expiredLicenses - expiringThisMonth
-            ),
-          },
-        },
-        recentTasks: occurrences
-          .sort(
-            (a: any, b: any) =>
-              (b.startDate?.getTime() ?? 0) - (a.startDate?.getTime() ?? 0)
-          )
-          .slice(0, 10),
-        overdueTasks,
-        projectProgress: projectProgress
-          .sort((a: any, b: any) => b.totalTasks - a.totalTasks)
-          .slice(0, 6),
-        taskDistribution,
-        customerReport: clientAgg.slice(0, 8),
-        teamStatus,
-        weeklyDigest: {
-          weekStart: dateStart,
-          weekEnd: dateEnd,
-          created: createdInWindow.length,
-          completed: completedInWindow.length,
-          open: openInWindow.length,
-          overdue: overdueInWindow.length,
-          completionRate: occurrences.length
-            ? Math.round((completedInWindow.length / occurrences.length) * 100)
-            : 0,
-          topPerformers,
-        },
-        deltas,
-      };
-
-      await cacheSetJson(cacheKey, payload, 120); // 120s TTL
-      return payload;
-    })();
-
-    inflight.set(inflightKey, running);
-    const result = await running.finally(() => inflight.delete(inflightKey));
-    return res.json(result);
+    await cacheSetJson(cacheKey, payload, 120);
+    res.json(payload);
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ message: "Failed to load dashboard" });
+    res.status(500).json({ message: "Failed to load dashboard" });
   }
 };
-
-
-
 
 // GET /task/occurrence/:id/docs
 // ===== Replace getOccurrenceDocs with the debug version below =====
