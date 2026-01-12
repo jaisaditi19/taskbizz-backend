@@ -1137,6 +1137,7 @@ export async function listTaskOccurrences(
             projectId: true,
             clientId: true,
             assignees: { select: { userId: true } },
+            recurrenceRule: true,
           },
         },
       },
@@ -1160,8 +1161,14 @@ export async function listTaskOccurrences(
         occurrenceStart: occ.startDate,
         occurrenceDue: occ.dueDate,
         assignedToIds: occAssignees,
+        recurrenceRule: occ.recurrenceRule ?? null,
         assignedToId: occ.assignedToId ?? taskAssignees[0] ?? null,
-        task: occ.task,
+        task: occ.task
+          ? {
+              ...occ.task,
+              recurrenceRule: occ.task.recurrenceRule ?? null, // ✅ IMPORTANT
+            }
+          : null,
         sequentialId: occ.sequentialId,
       };
     });
