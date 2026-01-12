@@ -13,6 +13,11 @@ const router = express_1.default.Router();
 // Master Task Routes
 router.post("/", auth_1.authenticate, (0, authorize_1.authorizeAny)(["ADMIN", "MANAGER"]), subscription_1.requireWriteAccess, taskController_1.createTask); // Create new task (master template)
 router.get("/", auth_1.authenticate, taskController_1.listTaskOccurrences); // List all occurrences (with filters)
+router.get("/my", auth_1.authenticate, taskController_1.listMyTaskOccurrences); // List all occurrences (with filters)
+router.get("/kanban/columns", auth_1.authenticate, taskController_1.getKanbanColumns); // List all occurrences (with filters)
+router.get("/kanban/tasks", auth_1.authenticate, taskController_1.getKanbanTasks); // List all occurrences (with filters)
+router.get("/employee/dashboard", auth_1.authenticate, taskController_1.getEmployeeDashboard); // List all occurrences (with filters)
+router.get("/project-summary", auth_1.authenticate, taskController_1.taskProjectSummary); // Get task summary by project
 router.put("/:id", auth_1.authenticate, subscription_1.requireWriteAccess, taskController_1.updateTask); // Update master task (affects future occurrences)
 router.patch("/occurrence/:id/status", auth_1.authenticate, subscription_1.requireWriteAccess, taskController_1.updateOccurrenceStatus); // Update master task status
 router.post("/bulk-upload", auth_1.authenticate, (0, authorize_1.authorizeAny)(["ADMIN", "MANAGER"]), subscription_1.requireWriteAccess, taskController_1.bulkUploadTasks);

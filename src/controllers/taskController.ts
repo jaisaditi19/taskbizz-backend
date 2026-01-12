@@ -45,6 +45,7 @@ import {
 import { invalidateOrgCaches } from "../utils/cacheInvalidate";
 import axios from "axios";
 import { sendTaskBizzServiceUpdate } from "../integrations/whatsapp/myoperator";
+import { TaskStatus } from "../../prisma/generated/org-client";
 
 async function resolveOrgPrisma(req: Request) {
   const maybe = (req as any).orgPrisma;
@@ -881,81 +882,122 @@ function decodeCursor(s?: string): { sd: string; id: string } | null {
 
 
 export async function listTaskOccurrences(
-  req: Request & { user?: any; subscriptionCtx?: any },
+  req: Request & { user?: any },
   res: Response
 ) {
   try {
+    const orgPrisma = await resolveOrgPrisma(req);
+
     const {
       start,
       end,
+      projectId,
       assignedTo,
       status,
+      priority,
       clientId,
-      projectId,
+      managerId,
+      q,
       limit,
       nextCursor,
-      q,
+      durationMin,
+      durationMax,
     } = req.query as Record<string, string | undefined>;
 
-    const orgPrisma = await resolveOrgPrisma(req);
+    /* ---------------------------------------------------
+       1. HARD RULE: projectId is mandatory
+    --------------------------------------------------- */
+    const projectVals = toList(projectId);
+    if (!projectVals?.length) {
+      return res.status(400).json({
+        message: "projectId is required for task list view",
+      });
+    }
 
-    // ---------- Date logic ----------
-    // Goal:
-    //  - No start/end -> CURRENT YEAR (full year)
-    //  - start & end  -> use [start..end]
-    //  - start only   -> month window of start
-    //  - end only     -> month window of end
-    const hasStart = !!(start && start.trim());
-    const hasEnd = !!(end && end.trim());
-    let windowStart: Date | undefined;
-    let windowEnd: Date | undefined;
+    /* ---------------------------------------------------
+       2. DATE WINDOW (DEFAULT = CURRENT MONTH)
+    --------------------------------------------------- */
+    const hasStart = !!start?.trim();
+    const hasEnd = !!end?.trim();
+
+    let windowStart: Date;
+    let windowEnd: Date;
 
     if (hasStart && hasEnd) {
-      const s = DateTime.fromISO(String(start), { zone: "utc" }).toUTC();
-      const e = DateTime.fromISO(String(end), { zone: "utc" }).toUTC();
-      windowStart = s.toJSDate();
-      windowEnd = e.toJSDate();
-    } else if (hasStart && !hasEnd) {
-      const s = DateTime.fromISO(String(start), { zone: "utc" }).toUTC();
-      windowStart = s.startOf("month").toJSDate();
-      windowEnd = s.endOf("month").toJSDate();
-    } else if (!hasStart && hasEnd) {
-      const e = DateTime.fromISO(String(end), { zone: "utc" }).toUTC();
-      windowStart = e.startOf("month").toJSDate();
-      windowEnd = e.endOf("month").toJSDate();
+      windowStart = DateTime.fromISO(start!, { zone: "utc" })
+        .startOf("day")
+        .toJSDate();
+      windowEnd = DateTime.fromISO(end!, { zone: "utc" })
+        .endOf("day")
+        .toJSDate();
     } else {
-      // NEW: default to current year in UTC if no start/end provided
-      const nowUTC = DateTime.utc();
-      windowStart = nowUTC.startOf("year").toJSDate();
-      windowEnd = nowUTC.endOf("year").toJSDate();
+      const now = DateTime.utc();
+      windowStart = now.startOf("month").toJSDate();
+      windowEnd = now.endOf("month").toJSDate();
     }
 
-    // ---------- WHERE ----------
-    const AND: any[] = [];
+    /* ---------------------------------------------------
+       3. WHERE CLAUSE
+    --------------------------------------------------- */
+    const AND: any[] = [
+      {
+        OR: [
+          { projectId: { in: projectVals } },
+          { task: { projectId: { in: projectVals } } },
+        ],
+      },
+    ];
 
-    // Date window (always defined now)
-    AND.push({ startDate: { lte: windowEnd } });
-    AND.push({ dueDate: { gte: windowStart } });
+    const hasDuration = durationMin || durationMax;
+    const todayUTC = DateTime.utc().startOf("day");
+    const isOverdue =
+      (durationMin && Number(durationMin) < 0) ||
+      (durationMax && Number(durationMax) < 0);
 
-    // Duration filter (derived from dueDate)
-    const durationMin = req.query.durationMin;
-    const durationMax = req.query.durationMax;
+    /* ---------- Duration (DUE IN X–Y DAYS FROM TODAY) ---------- */
+    if (hasDuration) {
+      const min = durationMin != null ? Number(durationMin) : undefined;
+      const max = durationMax != null ? Number(durationMax) : undefined;
 
-    if (durationMin || durationMax) {
-      const todayUTC = DateTime.utc();
+      // 🔥 OVERDUE CASE
+      if ((min != null && min < 0) || (max != null && max < 0)) {
+        AND.push({
+          dueDate: {
+            lt: todayUTC.toJSDate(),
+            gte: windowStart,
+          },
+        });
+      } else {
+        // upcoming / today
+        AND.push({
+          dueDate: {
+            gte: todayUTC.toJSDate(),
+          },
+        });
 
-      if (durationMin) {
-        const minDue = todayUTC.plus({ days: Number(durationMin) }).toJSDate();
-        AND.push({ dueDate: { gte: minDue } });
+        if (min != null) {
+          AND.push({
+            dueDate: {
+              gte: todayUTC.plus({ days: min }).toJSDate(),
+            },
+          });
+        }
+
+        if (max != null) {
+          AND.push({
+            dueDate: {
+              lte: todayUTC.plus({ days: max }).toJSDate(),
+            },
+          });
+        }
       }
-
-      if (durationMax) {
-        const maxDue = todayUTC.plus({ days: Number(durationMax) }).toJSDate();
-        AND.push({ dueDate: { lte: maxDue } });
-      }
+    } else {
+      // normal month overlap
+      AND.push({ startDate: { lte: windowEnd } });
+      AND.push({ dueDate: { gte: windowStart } });
     }
 
-    // Status
+    /* ---------- Status ---------- */
     const VALID_STATUSES = [
       "OPEN",
       "IN_PROGRESS",
@@ -964,32 +1006,30 @@ export async function listTaskOccurrences(
       "IN_TESTING",
       "ON_HOLD",
       "APPROVED",
-      "CANCELLED",
       "PLANNING",
       "COMPLETED",
+      "CANCELLED",
     ] as const;
 
-    const requested = (toList(status) || [])
-      .map((s) => String(s).toUpperCase())
+    const requestedStatuses = toList(status)
+      ?.map((s) => s.toUpperCase())
       .filter((s) => VALID_STATUSES.includes(s as any));
 
-    if (requested.length > 0) {
-      // honor the caller's filter, but only with valid enum values
-      AND.push({ status: { in: requested as any } });
+    if (requestedStatuses?.length) {
+      AND.push({ status: { in: requestedStatuses } });
     } else {
-      // DEFAULT: show all active (exclude completed/cancelled)
       AND.push({ NOT: { status: { in: ["COMPLETED", "CANCELLED"] } } });
     }
 
-    // Priority
-    const priorityVals = toList(req.query.priority);
+    /* ---------- Priority ---------- */
+    const priorityVals = toList(priority);
     if (priorityVals?.length) {
       AND.push({
-        priority: { in: priorityVals.map((p) => String(p).toUpperCase()) },
+        priority: { in: priorityVals.map((p) => p.toUpperCase()) },
       });
     }
 
-    // Assignee
+    /* ---------- Assignee ---------- */
     const assignedVals = toList(assignedTo);
     if (assignedVals?.length) {
       AND.push({
@@ -1001,7 +1041,7 @@ export async function listTaskOccurrences(
       });
     }
 
-    // Client / Project
+    /* ---------- Client ---------- */
     const clientVals = toList(clientId);
     if (clientVals?.length) {
       AND.push({
@@ -1011,138 +1051,533 @@ export async function listTaskOccurrences(
         ],
       });
     }
-    const projectVals = toList(projectId);
-    if (projectVals?.length) {
-      AND.push({
-        OR: [
-          { projectId: { in: projectVals } },
-          { task: { projectId: { in: projectVals } } },
-        ],
-      });
-    }
 
-    // Manager filter (from UI dropdown)
-    const managerVals = toList(req.query.managerId);
+    /* ---------- Manager ---------- */
+    const managerVals = toList(managerId);
     if (managerVals?.length) {
       AND.push({
-        task: {
-          project: {
-            head: { in: managerVals },
-          },
-        },
+        task: { project: { head: { in: managerVals } } },
       });
     }
 
-    // Search
-    if (q && q.trim()) {
-      const term = q.trim();
+    /* ---------- Search ---------- */
+    if (q?.trim()) {
       AND.push({
         OR: [
-          { title: { contains: term, mode: "insensitive" } },
-          { remarks: { contains: term, mode: "insensitive" } },
-          { task: { title: { contains: term, mode: "insensitive" } } },
+          { title: { contains: q.trim(), mode: "insensitive" } },
+          { remarks: { contains: q.trim(), mode: "insensitive" } },
+          { task: { title: { contains: q.trim(), mode: "insensitive" } } },
         ],
       });
     }
 
-    // Cursor pagination (startDate ASC, id ASC)
-    const take =
-      Math.min(
-        3000,
-        Math.max(1, Number.isFinite(Number(limit)) ? Number(limit) : 500)
-      ) || 500;
+    /* ---------- Role Guard ---------- */
+    const user = req.user;
+    if (user?.role === "MANAGER") {
+      AND.push({ task: { project: { head: user.id } } });
+    }
 
-    const c = decodeCursor(nextCursor);
-    if (c) {
-      const sd = DateTime.fromISO(c.sd, { zone: "utc" });
+    /* ---------------------------------------------------
+       4. PAGINATION
+    --------------------------------------------------- */
+    const take = Math.min(100, Math.max(1, Number(limit) || 50));
+
+    const cursor = decodeCursor(nextCursor);
+    if (cursor) {
+      const sd = DateTime.fromISO(cursor.sd, { zone: "utc" });
       if (sd.isValid) {
         AND.push({
-          OR: [
-            { startDate: { gt: sd.toJSDate() } },
-            {
-              AND: [
-                { startDate: { equals: sd.toJSDate() } },
-                { id: { gt: c.id } },
-              ],
-            },
-          ],
+          OR: isOverdue
+            ? [
+              { dueDate: { lt: sd.toJSDate() } },
+              {
+                AND: [
+                  { dueDate: { equals: sd.toJSDate() } },
+                  { id: { gt: cursor.id } },
+                ],
+              },
+            ]
+            : [
+              { dueDate: { gt: sd.toJSDate() } },
+              {
+                AND: [
+                  { dueDate: { equals: sd.toJSDate() } },
+                  { id: { gt: cursor.id } },
+                ],
+              },
+            ],
         });
       }
     }
 
-    const user = (req as any).currentUser ?? req.user;
-    if (user?.role === "MANAGER") {
-      // Managers can see only occurrences whose task belongs to a project they head
-      AND.push({ task: { project: { head: user.id } } });
-    }
-
-    const where = { AND };
-
-    // ---------- Query ----------
+    /* ---------------------------------------------------
+       5. QUERY
+    --------------------------------------------------- */
     const rows = await orgPrisma.taskOccurrence.findMany({
-      where,
-      include: {
+      where: { AND },
+      orderBy: [{ dueDate: "asc" }, { id: "asc" }],
+      take,
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        priority: true,
+        startDate: true,
+        dueDate: true,
+        remarks: true,
+        projectId: true,
+        clientId: true,
+        assignedToId: true,
+        sequentialId: true,
+        assignees: { select: { userId: true } },
         task: {
-          include: {
-            customValues: { include: { field: true } },
+          select: {
+            id: true,
+            title: true,
+            projectId: true,
+            clientId: true,
             assignees: { select: { userId: true } },
           },
         },
-        assignees: { select: { userId: true } },
       },
-      orderBy: [{ startDate: "asc" }, { id: "asc" }],
-      take,
     });
 
-    // ---------- Shape ----------
+    /* ---------------------------------------------------
+       6. RESPONSE SHAPE
+    --------------------------------------------------- */
     const occurrences = rows.map((occ: any) => {
-      const taskAssigned = Array.isArray(occ.task?.assignees)
-        ? occ.task.assignees.map((a: any) => a.userId)
-        : [];
-      const occAssigned = Array.isArray(occ.assignees)
-        ? occ.assignees.map((a: any) => a.userId)
-        : [];
+      const occAssignees = occ.assignees.map((a: any) => a.userId);
+      const taskAssignees = occ.task?.assignees.map((a: any) => a.userId) || [];
+
       return {
-        ...occ,
-        assignedToIds: occAssigned,
-        assignedToId: occ.assignedToId ?? taskAssigned[0] ?? null,
-        task: {
-          ...occ.task,
-          assignedToIds: taskAssigned,
-          attachments: [] as any[],
-        },
-        attachments: [] as any[],
+        id: occ.id,
+        title: occ.title,
+        status: occ.status,
+        priority: occ.priority,
+        remarks: occ.remarks,
+        projectId: occ.projectId,
+        clientId: occ.clientId,
+        occurrenceStart: occ.startDate,
+        occurrenceDue: occ.dueDate,
+        assignedToIds: occAssignees,
+        assignedToId: occ.assignedToId ?? taskAssignees[0] ?? null,
+        task: occ.task,
+        sequentialId: occ.sequentialId,
       };
     });
 
     const last = rows[rows.length - 1];
     const next =
-      last && last.startDate && last.id
+      last && last.dueDate
         ? encodeCursor({
-            sd: DateTime.fromJSDate(last.startDate).toUTC().toISO()!,
+            sd: DateTime.fromJSDate(last.dueDate).toUTC().toISO()!,
             id: String(last.id),
           })
         : null;
 
     res.json({
       occurrences,
-      window: { start: windowStart ?? null, end: windowEnd ?? null }, // full current year when dates are cleared
+      window: { start: windowStart, end: windowEnd },
       pagination: { take, nextCursor: next, count: occurrences.length },
-      filters: {
-        status: requested.length
-          ? requested
-          : ["ACTIVE_DEFAULT_EXCLUDES_COMPLETED_CANCELLED"],
-        assignedTo: assignedVals ?? "ALL",
-        clientId: clientVals ?? "ALL",
-        projectId: projectVals ?? "ALL",
-        q: q?.trim() || null,
-      },
     });
   } catch (err) {
     console.error("listTaskOccurrences error:", err);
-    res.status(500).json({ message: "Failed to list occurrences", err });
+    res.status(500).json({ message: "Failed to list task occurrences" });
   }
 }
+
+export async function taskProjectSummary(
+  req: Request & { user?: any },
+  res: Response
+) {
+  const orgPrisma = await resolveOrgPrisma(req);
+
+  const {
+    start,
+    end,
+    status,
+    priority,
+    assignedTo,
+    managerId,
+    q,
+    durationMin,
+    durationMax,
+  } = req.query as Record<string, string | undefined>;
+
+  const AND: any[] = [];
+  const todayUTC = DateTime.utc().startOf("day");
+  const windowStart = start
+    ? DateTime.fromISO(start).startOf("day").toJSDate()
+    : DateTime.utc().startOf("month").toJSDate();
+
+  const windowEnd = end
+    ? DateTime.fromISO(end).endOf("day").toJSDate()
+    : DateTime.utc().endOf("month").toJSDate();
+
+
+  /* ---------- DATE / DURATION ---------- */
+  /* ---------- DATE / DURATION ---------- */
+  if (durationMin || durationMax) {
+    const min = durationMin != null ? Number(durationMin) : undefined;
+    const max = durationMax != null ? Number(durationMax) : undefined;
+
+    // 🔥 OVERDUE TASKS
+    if ((min != null && min < 0) || (max != null && max < 0)) {
+      AND.push({
+        dueDate: {
+          lt: todayUTC.toJSDate(),
+          gte: windowStart,
+        },
+      });
+
+    } else {
+      // Upcoming / today tasks
+      AND.push({
+        dueDate: {
+          gte: todayUTC.toJSDate(),
+        },
+      });
+
+      if (min != null) {
+        AND.push({
+          dueDate: {
+            gte: todayUTC.plus({ days: min }).toJSDate(),
+          },
+        });
+      }
+
+      if (max != null) {
+        AND.push({
+          dueDate: {
+            lte: todayUTC.plus({ days: max }).toJSDate(),
+          },
+        });
+      }
+    }
+  } else {
+    const ws = start
+      ? DateTime.fromISO(start).startOf("day")
+      : DateTime.utc().startOf("month");
+
+    const we = end
+      ? DateTime.fromISO(end).endOf("day")
+      : DateTime.utc().endOf("month");
+
+    AND.push({ startDate: { lte: we.toJSDate() } });
+    AND.push({ dueDate: { gte: ws.toJSDate() } });
+  }
+
+  /* ---------- Filters ---------- */
+  if (status) AND.push({ status: { in: toList(status) } });
+  else AND.push({ NOT: { status: { in: ["COMPLETED", "CANCELLED"] } } });
+
+  if (priority) AND.push({ priority: { in: toList(priority) } });
+
+  const assignedVals = toList(assignedTo);
+  if (assignedVals?.length) {
+    AND.push({
+      OR: [
+        { assignedToId: { in: assignedVals } },
+        { assignees: { some: { userId: { in: assignedVals } } } },
+        { task: { assignees: { some: { userId: { in: assignedVals } } } } },
+      ],
+    });
+  }
+
+  const managerVals = toList(managerId);
+  if (managerVals?.length) {
+    AND.push({
+      task: {
+        project: {
+          head: { in: managerVals },
+        },
+      },
+    });
+  }
+
+  if (q?.trim()) {
+    AND.push({
+      OR: [
+        { title: { contains: q, mode: "insensitive" } },
+        { remarks: { contains: q, mode: "insensitive" } },
+        { task: { title: { contains: q, mode: "insensitive" } } },
+      ],
+    });
+  }
+
+  if (req.user?.role === "MANAGER") {
+    AND.push({
+      task: {
+        project: {
+          head: req.user.id,
+        },
+      },
+    });
+  }
+
+  /* ---------- GROUP ---------- */
+  const rows = await orgPrisma.taskOccurrence.groupBy({
+    by: ["projectId"],
+    where: { AND },
+    _count: { _all: true },
+  });
+
+  if (!rows.length) return res.json([]);
+
+  const projects = await orgPrisma.project.findMany({
+    where: { id: { in: rows.map((r: any) => r.projectId).filter(Boolean) } },
+    select: { id: true, name: true },
+  });
+
+  const map = new Map(projects.map((p: any) => [p.id, p.name]));
+
+  res.json(
+    rows.map((r: any) => ({
+      projectId: r.projectId ?? "general",
+      projectName: map.get(r.projectId!) ?? "General",
+      count: r._count._all,
+    }))
+  );
+}
+
+export async function listMyTaskOccurrences(
+  req: Request & { user?: any },
+  res: Response
+) {
+  try {
+    const user = req.user;
+    if (!user) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const orgPrisma = await resolveOrgPrisma(req);
+
+    const { start, end, status, q, limit, durationMin, durationMax } =
+      req.query as Record<string, string | undefined>;
+
+    /* ---------------------------------------------------
+       1. DATE WINDOW (optional, overlaps)
+    --------------------------------------------------- */
+    let windowStart: Date | undefined;
+    let windowEnd: Date | undefined;
+
+    if (start && end) {
+      windowStart = new Date(new Date(start).setHours(0, 0, 0, 0));
+      windowEnd = new Date(new Date(end).setHours(23, 59, 59, 999));
+    }
+
+    /* ---------------------------------------------------
+       2. BASE WHERE
+    --------------------------------------------------- */
+    const AND: any[] = [];
+
+    // Assigned to current user (occurrence OR task)
+    AND.push({
+      OR: [
+        { assignedToId: user.id },
+        { assignees: { some: { userId: user.id } } },
+        { task: { assignees: { some: { userId: user.id } } } },
+      ],
+    });
+
+const hasDuration = durationMin || durationMax;
+
+    if (!hasDuration && windowStart && windowEnd) {
+      AND.push({ startDate: { lte: windowEnd } });
+      AND.push({ dueDate: { gte: windowStart } });
+    }
+
+    // Status
+    if (status) {
+      AND.push({ status: status.toUpperCase() });
+    } else {
+      AND.push({
+        NOT: { status: { in: ["COMPLETED", "CANCELLED"] } },
+      });
+    }
+
+    // Search
+    if (q?.trim()) {
+      AND.push({
+        OR: [
+          { title: { contains: q.trim(), mode: "insensitive" } },
+          { remarks: { contains: q.trim(), mode: "insensitive" } },
+          { task: { title: { contains: q.trim(), mode: "insensitive" } } },
+        ],
+      });
+    }
+
+    /* ---------------------------------------------------
+   3. DURATION FILTER (DB LEVEL – FIXED)
+--------------------------------------------------- */
+    if (durationMin || durationMax) {
+      const todayUTC = new Date();
+      todayUTC.setHours(0, 0, 0, 0);
+
+      const min = durationMin != null ? Number(durationMin) : undefined;
+      const max = durationMax != null ? Number(durationMax) : undefined;
+
+      // 🔥 OVERDUE CASE
+      if ((min != null && min < 0) || (max != null && max < 0)) {
+        AND.push({
+          dueDate: {
+            lt: todayUTC,
+            gte: windowStart ?? todayUTC,
+          },
+        });
+      } else {
+        // Upcoming / today
+        AND.push({
+          dueDate: {
+            gte: todayUTC,
+          },
+        });
+
+        if (min != null) {
+          const minDate = new Date(todayUTC);
+          minDate.setDate(minDate.getDate() + min);
+          AND.push({ dueDate: { gte: minDate } });
+        }
+
+        if (max != null) {
+          const maxDate = new Date(todayUTC);
+          maxDate.setDate(maxDate.getDate() + max);
+          AND.push({ dueDate: { lte: maxDate } });
+        }
+      }
+    }
+
+    /* ---------------------------------------------------
+       4. QUERY
+    --------------------------------------------------- */
+    const rows = await orgPrisma.taskOccurrence.findMany({
+      where: { AND },
+      orderBy: [{ dueDate: "asc" }, { id: "asc" }],
+      take: Math.min(500, Number(limit) || 200),
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        priority: true,
+        startDate: true,
+        dueDate: true,
+        remarks: true,
+        projectId: true,
+        clientId: true,
+        assignedToId: true,
+        assignees: { select: { userId: true } },
+        task: {
+          select: {
+            id: true,
+            title: true,
+            projectId: true,
+            clientId: true,
+            assignees: { select: { userId: true } },
+          },
+        },
+      },
+    });
+
+    /* ---------------------------------------------------
+       5. SHAPE RESPONSE
+    --------------------------------------------------- */
+    const occurrences = rows.map((r: any) => ({
+      ...r,
+      occurrenceStart: r.startDate,
+      occurrenceDue: r.dueDate,
+      assignedToIds: Array.from(
+        new Set([
+          ...(r.assignees?.map((a: any) => a.userId) ?? []),
+          ...(r.task?.assignees?.map((a: any) => a.userId) ?? []),
+        ])
+      ),
+      projectId: r.projectId ?? r.task?.projectId ?? null,
+      clientId: r.clientId ?? r.task?.clientId ?? null,
+    }));
+
+    res.json({
+      occurrences,
+      meta: {
+        durationMin: durationMin ?? null,
+        durationMax: durationMax ?? null,
+      },
+    });
+  } catch (err) {
+    console.error("listMyTaskOccurrences error", err);
+    res.status(500).json({ message: "Failed to load my tasks" });
+  }
+}
+
+type TaskStatusKey = keyof typeof TaskStatus;
+
+type KanbanColumnConfig = {
+  title: string;
+  color: string;
+  order: number;
+  hidden?: boolean;
+};
+
+const KANBAN_WORKFLOW: Record<TaskStatusKey, KanbanColumnConfig> = {
+  OPEN: { title: "Open", color: "emerald", order: 1 },
+  PLANNING: { title: "Planning", color: "cyan", order: 2 },
+  IN_PROGRESS: { title: "In Progress", color: "amber", order: 3 },
+  ON_TRACK: { title: "On Track", color: "blue", order: 4 },
+  IN_TESTING: { title: "In Testing", color: "purple", order: 5 },
+  APPROVED: { title: "Approved", color: "indigo", order: 6 },
+  DELAYED: { title: "Delayed", color: "rose", order: 7 },
+  ON_HOLD: { title: "On Hold", color: "gray", order: 8 },
+  COMPLETED: { title: "Completed", color: "green", order: 9 },
+  CANCELLED: { title: "Cancelled", color: "slate", order: 10, hidden: true },
+};
+
+
+function resolveStatus(task: { status: TaskStatus }): TaskStatusKey {
+  return TaskStatus[task.status] as TaskStatusKey;
+}
+
+// GET /api/kanban/columns
+export function getKanbanColumns(req: any, res: any) {
+  const columns = Object.entries(KANBAN_WORKFLOW)
+    .filter(([, c]) => !c.hidden)
+    .sort((a, b) => a[1].order - b[1].order)
+    .map(([id, c]) => ({
+      id,
+      title: c.title,
+      color: c.color,
+    }));
+
+  res.json({ columns });
+}
+
+
+// GET /api/kanban/tasks
+// ?status=OPEN&cursor=...&limit=30
+export async function getKanbanTasks(req: any, res: any) {
+  const { status, cursor, limit = 30 } = req.query;
+  const orgPrisma = await resolveOrgPrisma(req);
+
+  const rows = await orgPrisma.taskOccurrence.findMany({
+    where: {
+      status,
+      NOT: { status: "CANCELLED" },
+    },
+    orderBy: [{ dueDate: "asc" }, { id: "asc" }],
+    take: Number(limit),
+    ...(cursor && {
+      skip: 1,
+      cursor: { id: cursor },
+    }),
+  });
+
+  const nextCursor = rows.at(-1)?.id ?? null;
+
+  res.json({
+    tasks: rows,
+    nextCursor,
+  });
+}
+
+
 
 /**
  * Complete a specific occurrence
@@ -5428,3 +5863,208 @@ export async function sendTaskCreationNotifications(
     console.error('Error in sendTaskCreationNotifications:', err);
   }
 }
+
+export const getEmployeeDashboard = async (
+  req: Request & { user?: any },
+  res: Response
+) => {
+  try {
+    const user = req.user;
+    const orgId = user.orgId;
+
+    const { start, end } = req.query as Record<string, string>;
+    const dateStart = new Date(start);
+    const dateEnd = new Date(end);
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const weekStart = new Date(today);
+    weekStart.setDate(today.getDate() - ((today.getDay() + 6) % 7)); // ISO Monday
+    weekStart.setHours(0, 0, 0, 0);
+
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 6);
+    weekEnd.setHours(23, 59, 59, 999);
+
+    const orgPrisma = await resolveOrgPrisma(req);
+
+    /* ================= CACHE ================= */
+
+    const cacheKey = orgKey(
+      orgId,
+      "employee-dashboard",
+      `u=${user.id}:s=${start}:e=${end}`
+    );
+
+    const cached = await cacheGetJson(cacheKey);
+    if (cached) return res.json({ ...cached, cached: true });
+
+    /* ================= FETCH ================= */
+
+    const occurrences = await orgPrisma.taskOccurrence.findMany({
+      where: {
+        assignedToId: user.id,
+        OR: [
+          { startDate: { gte: dateStart, lte: dateEnd } },
+          { dueDate: { gte: dateStart, lte: dateEnd } },
+          { completedAt: { gte: dateStart, lte: dateEnd } },
+        ],
+      },
+      include: {
+        task: {
+          select: {
+            title: true,
+            status: true,
+            priority: true,
+          },
+        },
+      },
+      orderBy: { updatedAt: "desc" },
+    });
+
+    /* ================= HELPERS ================= */
+
+    const getStatus = (t: any) =>
+      (t.status || t.task?.status || "OPEN").toUpperCase();
+
+    const isCancelled = (t: any) => getStatus(t) === "CANCELLED";
+    const isCompleted = (t: any) => getStatus(t) === "COMPLETED";
+
+    const normalizeTask = (t: any) => ({
+      ...t,
+      occurrenceDue: t.dueDate ?? null,
+    });
+
+    const isOverdue = (t: any) => {
+      if (isCompleted(t) || isCancelled(t)) return false;
+      if (!t.dueDate) return false;
+      return new Date(t.dueDate) < today;
+    };
+
+    /* ================= AGGREGATION ================= */
+
+    let completedTasks = 0;
+    let openTasks = 0;
+    let overdueTasks = 0;
+
+    const tasksByStatus: Record<string, number> = {};
+    const upcomingDeadlines: any[] = [];
+    const overdueTasksList: any[] = [];
+    const dueTodayList: any[] = [];
+    const dueThisWeekList: any[] = [];
+    const recentTasks: any[] = [];
+
+    for (const t of occurrences) {
+      if (isCancelled(t)) continue;
+
+      const status = getStatus(t);
+      const due = t.dueDate ? new Date(t.dueDate) : null;
+
+      tasksByStatus[status] = (tasksByStatus[status] || 0) + 1;
+
+      if (isCompleted(t)) completedTasks++;
+      else openTasks++;
+
+      if (isOverdue(t)) {
+        overdueTasks++;
+        overdueTasksList.push(normalizeTask(t));
+      }
+
+      // ---------- DUE TODAY ----------
+      if (
+        !isCompleted(t) &&
+        due &&
+        due >= today &&
+        due < new Date(today.getTime() + 24 * 60 * 60 * 1000)
+      ) {
+        dueTodayList.push(normalizeTask(t));
+      }
+
+      // ---------- DUE THIS WEEK ----------
+      if (
+        !isCompleted(t) &&
+        due &&
+        due >= weekStart &&
+        due <= weekEnd &&
+        due >= today
+      ) {
+        dueThisWeekList.push(normalizeTask(t));
+      }
+
+      // ---------- UPCOMING ----------
+      if (!isCompleted(t) && due && due >= today) {
+        upcomingDeadlines.push(normalizeTask(t));
+      }
+
+      recentTasks.push({
+        id: t.id,
+        title: t.title || t.task?.title,
+        status,
+        priority: t.priority || t.task?.priority,
+        occurrenceDue: t.dueDate,
+        isCompleted: isCompleted(t),
+        lastActivityAt: t.completedAt || t.updatedAt || t.createdAt,
+      });
+    }
+
+    const assignedTasks = completedTasks + openTasks;
+
+    const completionRate =
+      assignedTasks > 0
+        ? Math.round((completedTasks / assignedTasks) * 100)
+        : 0;
+
+    /* ================= RESPONSE ================= */
+
+    const payload = {
+      stats: {
+        assignedTasks,
+        completedTasks,
+        openTasks,
+        overdueTasks,
+        completionRate,
+        dueToday: dueTodayList.length,
+        dueThisWeek: dueThisWeekList.length,
+      },
+
+      tasksByStatus,
+
+      upcomingDeadlines: upcomingDeadlines
+        .sort(
+          (a, b) =>
+            new Date(a.occurrenceDue).getTime() -
+            new Date(b.occurrenceDue).getTime()
+        )
+        .slice(0, 10),
+
+      overdueTasksList: overdueTasksList
+        .sort(
+          (a, b) =>
+            new Date(a.occurrenceDue).getTime() -
+            new Date(b.occurrenceDue).getTime()
+        )
+        .slice(0, 10),
+
+      dueTodayList: dueTodayList.sort(
+        (a, b) =>
+          new Date(a.occurrenceDue).getTime() -
+          new Date(b.occurrenceDue).getTime()
+      ),
+
+      dueThisWeekList: dueThisWeekList.sort(
+        (a, b) =>
+          new Date(a.occurrenceDue).getTime() -
+          new Date(b.occurrenceDue).getTime()
+      ),
+
+      recentTasks: recentTasks.slice(0, 10),
+    };
+
+    await cacheSetJson(cacheKey, payload, 60);
+    res.json(payload);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to load employee dashboard" });
+  }
+};

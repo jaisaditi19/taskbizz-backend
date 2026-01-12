@@ -22,6 +22,11 @@ import {
   bulkUpdateOccurrences,
   copyOccurrenceAttachments,
   deleteOccurrenceAttachment,
+  taskProjectSummary,
+  listMyTaskOccurrences,
+  getKanbanColumns,
+  getKanbanTasks,
+  getEmployeeDashboard
 } from "../controllers/taskController";
 import { authenticate } from "../middlewares/auth";
 import { authorize, authorizeAny } from "../middlewares/authorize";
@@ -39,6 +44,14 @@ router.post(
   createTask
 ); // Create new task (master template)
 router.get("/", authenticate, listTaskOccurrences); // List all occurrences (with filters)
+router.get("/my", authenticate, listMyTaskOccurrences); // List all occurrences (with filters)
+router.get("/kanban/columns", authenticate, getKanbanColumns); // List all occurrences (with filters)
+router.get("/kanban/tasks", authenticate, getKanbanTasks); // List all occurrences (with filters)
+router.get("/employee/dashboard", authenticate, getEmployeeDashboard); // List all occurrences (with filters)
+
+
+
+router.get("/project-summary", authenticate, taskProjectSummary); // Get task summary by project
 router.put("/:id", authenticate,requireWriteAccess, updateTask); // Update master task (affects future occurrences)
 router.patch(
   "/occurrence/:id/status",

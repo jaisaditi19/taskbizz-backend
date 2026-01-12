@@ -36,9 +36,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getDashboard = exports.bulkUploadTasks = exports.updateTask = exports.updateOccurrence = exports.createTask = exports.uploadTaskFiles = void 0;
+exports.getEmployeeDashboard = exports.getDashboard = exports.bulkUploadTasks = exports.updateTask = exports.updateOccurrence = exports.createTask = exports.uploadTaskFiles = void 0;
 exports.generateOccurrencesForAllTasks = generateOccurrencesForAllTasks;
 exports.listTaskOccurrences = listTaskOccurrences;
+exports.taskProjectSummary = taskProjectSummary;
+exports.listMyTaskOccurrences = listMyTaskOccurrences;
+exports.getKanbanColumns = getKanbanColumns;
+exports.getKanbanTasks = getKanbanTasks;
 exports.completeOccurrence = completeOccurrence;
 exports.listTasksByProject = listTasksByProject;
 exports.updateOccurrenceStatus = updateOccurrenceStatus;
@@ -68,6 +72,7 @@ const date_fns_1 = require("date-fns");
 const cache_1 = require("../utils/cache");
 const axios_1 = __importDefault(require("axios"));
 const myoperator_1 = require("../integrations/whatsapp/myoperator");
+const org_client_1 = require("../../prisma/generated/org-client");
 async function resolveOrgPrisma(req) {
     const maybe = req.orgPrisma;
     if (maybe)
@@ -799,60 +804,94 @@ function decodeCursor(s) {
 }
 async function listTaskOccurrences(req, res) {
     try {
-        const { start, end, assignedTo, status, clientId, projectId, limit, nextCursor, q, } = req.query;
         const orgPrisma = await resolveOrgPrisma(req);
-        // ---------- Date logic ----------
-        // Goal:
-        //  - No start/end -> CURRENT YEAR (full year)
-        //  - start & end  -> use [start..end]
-        //  - start only   -> month window of start
-        //  - end only     -> month window of end
-        const hasStart = !!(start && start.trim());
-        const hasEnd = !!(end && end.trim());
+        const { start, end, projectId, assignedTo, status, priority, clientId, managerId, q, limit, nextCursor, durationMin, durationMax, } = req.query;
+        /* ---------------------------------------------------
+           1. HARD RULE: projectId is mandatory
+        --------------------------------------------------- */
+        const projectVals = toList(projectId);
+        if (!projectVals?.length) {
+            return res.status(400).json({
+                message: "projectId is required for task list view",
+            });
+        }
+        /* ---------------------------------------------------
+           2. DATE WINDOW (DEFAULT = CURRENT MONTH)
+        --------------------------------------------------- */
+        const hasStart = !!start?.trim();
+        const hasEnd = !!end?.trim();
         let windowStart;
         let windowEnd;
         if (hasStart && hasEnd) {
-            const s = luxon_1.DateTime.fromISO(String(start), { zone: "utc" }).toUTC();
-            const e = luxon_1.DateTime.fromISO(String(end), { zone: "utc" }).toUTC();
-            windowStart = s.toJSDate();
-            windowEnd = e.toJSDate();
-        }
-        else if (hasStart && !hasEnd) {
-            const s = luxon_1.DateTime.fromISO(String(start), { zone: "utc" }).toUTC();
-            windowStart = s.startOf("month").toJSDate();
-            windowEnd = s.endOf("month").toJSDate();
-        }
-        else if (!hasStart && hasEnd) {
-            const e = luxon_1.DateTime.fromISO(String(end), { zone: "utc" }).toUTC();
-            windowStart = e.startOf("month").toJSDate();
-            windowEnd = e.endOf("month").toJSDate();
+            windowStart = luxon_1.DateTime.fromISO(start, { zone: "utc" })
+                .startOf("day")
+                .toJSDate();
+            windowEnd = luxon_1.DateTime.fromISO(end, { zone: "utc" })
+                .endOf("day")
+                .toJSDate();
         }
         else {
-            // NEW: default to current year in UTC if no start/end provided
-            const nowUTC = luxon_1.DateTime.utc();
-            windowStart = nowUTC.startOf("year").toJSDate();
-            windowEnd = nowUTC.endOf("year").toJSDate();
+            const now = luxon_1.DateTime.utc();
+            windowStart = now.startOf("month").toJSDate();
+            windowEnd = now.endOf("month").toJSDate();
         }
-        // ---------- WHERE ----------
-        const AND = [];
-        // Date window (always defined now)
-        AND.push({ startDate: { lte: windowEnd } });
-        AND.push({ dueDate: { gte: windowStart } });
-        // Duration filter (derived from dueDate)
-        const durationMin = req.query.durationMin;
-        const durationMax = req.query.durationMax;
-        if (durationMin || durationMax) {
-            const todayUTC = luxon_1.DateTime.utc();
-            if (durationMin) {
-                const minDue = todayUTC.plus({ days: Number(durationMin) }).toJSDate();
-                AND.push({ dueDate: { gte: minDue } });
+        /* ---------------------------------------------------
+           3. WHERE CLAUSE
+        --------------------------------------------------- */
+        const AND = [
+            {
+                OR: [
+                    { projectId: { in: projectVals } },
+                    { task: { projectId: { in: projectVals } } },
+                ],
+            },
+        ];
+        const hasDuration = durationMin || durationMax;
+        const todayUTC = luxon_1.DateTime.utc().startOf("day");
+        const isOverdue = (durationMin && Number(durationMin) < 0) ||
+            (durationMax && Number(durationMax) < 0);
+        /* ---------- Duration (DUE IN X–Y DAYS FROM TODAY) ---------- */
+        if (hasDuration) {
+            const min = durationMin != null ? Number(durationMin) : undefined;
+            const max = durationMax != null ? Number(durationMax) : undefined;
+            // 🔥 OVERDUE CASE
+            if ((min != null && min < 0) || (max != null && max < 0)) {
+                AND.push({
+                    dueDate: {
+                        lt: todayUTC.toJSDate(),
+                        gte: windowStart,
+                    },
+                });
             }
-            if (durationMax) {
-                const maxDue = todayUTC.plus({ days: Number(durationMax) }).toJSDate();
-                AND.push({ dueDate: { lte: maxDue } });
+            else {
+                // upcoming / today
+                AND.push({
+                    dueDate: {
+                        gte: todayUTC.toJSDate(),
+                    },
+                });
+                if (min != null) {
+                    AND.push({
+                        dueDate: {
+                            gte: todayUTC.plus({ days: min }).toJSDate(),
+                        },
+                    });
+                }
+                if (max != null) {
+                    AND.push({
+                        dueDate: {
+                            lte: todayUTC.plus({ days: max }).toJSDate(),
+                        },
+                    });
+                }
             }
         }
-        // Status
+        else {
+            // normal month overlap
+            AND.push({ startDate: { lte: windowEnd } });
+            AND.push({ dueDate: { gte: windowStart } });
+        }
+        /* ---------- Status ---------- */
         const VALID_STATUSES = [
             "OPEN",
             "IN_PROGRESS",
@@ -861,29 +900,27 @@ async function listTaskOccurrences(req, res) {
             "IN_TESTING",
             "ON_HOLD",
             "APPROVED",
-            "CANCELLED",
             "PLANNING",
             "COMPLETED",
+            "CANCELLED",
         ];
-        const requested = (toList(status) || [])
-            .map((s) => String(s).toUpperCase())
+        const requestedStatuses = toList(status)
+            ?.map((s) => s.toUpperCase())
             .filter((s) => VALID_STATUSES.includes(s));
-        if (requested.length > 0) {
-            // honor the caller's filter, but only with valid enum values
-            AND.push({ status: { in: requested } });
+        if (requestedStatuses?.length) {
+            AND.push({ status: { in: requestedStatuses } });
         }
         else {
-            // DEFAULT: show all active (exclude completed/cancelled)
             AND.push({ NOT: { status: { in: ["COMPLETED", "CANCELLED"] } } });
         }
-        // Priority
-        const priorityVals = toList(req.query.priority);
+        /* ---------- Priority ---------- */
+        const priorityVals = toList(priority);
         if (priorityVals?.length) {
             AND.push({
-                priority: { in: priorityVals.map((p) => String(p).toUpperCase()) },
+                priority: { in: priorityVals.map((p) => p.toUpperCase()) },
             });
         }
-        // Assignee
+        /* ---------- Assignee ---------- */
         const assignedVals = toList(assignedTo);
         if (assignedVals?.length) {
             AND.push({
@@ -894,7 +931,7 @@ async function listTaskOccurrences(req, res) {
                 ],
             });
         }
-        // Client / Project
+        /* ---------- Client ---------- */
         const clientVals = toList(clientId);
         if (clientVals?.length) {
             AND.push({
@@ -904,123 +941,447 @@ async function listTaskOccurrences(req, res) {
                 ],
             });
         }
-        const projectVals = toList(projectId);
-        if (projectVals?.length) {
-            AND.push({
-                OR: [
-                    { projectId: { in: projectVals } },
-                    { task: { projectId: { in: projectVals } } },
-                ],
-            });
-        }
-        // Manager filter (from UI dropdown)
-        const managerVals = toList(req.query.managerId);
+        /* ---------- Manager ---------- */
+        const managerVals = toList(managerId);
         if (managerVals?.length) {
             AND.push({
-                task: {
-                    project: {
-                        head: { in: managerVals },
-                    },
-                },
+                task: { project: { head: { in: managerVals } } },
             });
         }
-        // Search
-        if (q && q.trim()) {
-            const term = q.trim();
+        /* ---------- Search ---------- */
+        if (q?.trim()) {
             AND.push({
                 OR: [
-                    { title: { contains: term, mode: "insensitive" } },
-                    { remarks: { contains: term, mode: "insensitive" } },
-                    { task: { title: { contains: term, mode: "insensitive" } } },
+                    { title: { contains: q.trim(), mode: "insensitive" } },
+                    { remarks: { contains: q.trim(), mode: "insensitive" } },
+                    { task: { title: { contains: q.trim(), mode: "insensitive" } } },
                 ],
             });
         }
-        // Cursor pagination (startDate ASC, id ASC)
-        const take = Math.min(3000, Math.max(1, Number.isFinite(Number(limit)) ? Number(limit) : 500)) || 500;
-        const c = decodeCursor(nextCursor);
-        if (c) {
-            const sd = luxon_1.DateTime.fromISO(c.sd, { zone: "utc" });
+        /* ---------- Role Guard ---------- */
+        const user = req.user;
+        if (user?.role === "MANAGER") {
+            AND.push({ task: { project: { head: user.id } } });
+        }
+        /* ---------------------------------------------------
+           4. PAGINATION
+        --------------------------------------------------- */
+        const take = Math.min(100, Math.max(1, Number(limit) || 50));
+        const cursor = decodeCursor(nextCursor);
+        if (cursor) {
+            const sd = luxon_1.DateTime.fromISO(cursor.sd, { zone: "utc" });
             if (sd.isValid) {
                 AND.push({
-                    OR: [
-                        { startDate: { gt: sd.toJSDate() } },
-                        {
-                            AND: [
-                                { startDate: { equals: sd.toJSDate() } },
-                                { id: { gt: c.id } },
-                            ],
-                        },
-                    ],
+                    OR: isOverdue
+                        ? [
+                            { dueDate: { lt: sd.toJSDate() } },
+                            {
+                                AND: [
+                                    { dueDate: { equals: sd.toJSDate() } },
+                                    { id: { gt: cursor.id } },
+                                ],
+                            },
+                        ]
+                        : [
+                            { dueDate: { gt: sd.toJSDate() } },
+                            {
+                                AND: [
+                                    { dueDate: { equals: sd.toJSDate() } },
+                                    { id: { gt: cursor.id } },
+                                ],
+                            },
+                        ],
                 });
             }
         }
-        const user = req.currentUser ?? req.user;
-        if (user?.role === "MANAGER") {
-            // Managers can see only occurrences whose task belongs to a project they head
-            AND.push({ task: { project: { head: user.id } } });
-        }
-        const where = { AND };
-        // ---------- Query ----------
+        /* ---------------------------------------------------
+           5. QUERY
+        --------------------------------------------------- */
         const rows = await orgPrisma.taskOccurrence.findMany({
-            where,
-            include: {
+            where: { AND },
+            orderBy: [{ dueDate: "asc" }, { id: "asc" }],
+            take,
+            select: {
+                id: true,
+                title: true,
+                status: true,
+                priority: true,
+                startDate: true,
+                dueDate: true,
+                remarks: true,
+                projectId: true,
+                clientId: true,
+                assignedToId: true,
+                sequentialId: true,
+                assignees: { select: { userId: true } },
                 task: {
-                    include: {
-                        customValues: { include: { field: true } },
+                    select: {
+                        id: true,
+                        title: true,
+                        projectId: true,
+                        clientId: true,
                         assignees: { select: { userId: true } },
                     },
                 },
-                assignees: { select: { userId: true } },
             },
-            orderBy: [{ startDate: "asc" }, { id: "asc" }],
-            take,
         });
-        // ---------- Shape ----------
+        /* ---------------------------------------------------
+           6. RESPONSE SHAPE
+        --------------------------------------------------- */
         const occurrences = rows.map((occ) => {
-            const taskAssigned = Array.isArray(occ.task?.assignees)
-                ? occ.task.assignees.map((a) => a.userId)
-                : [];
-            const occAssigned = Array.isArray(occ.assignees)
-                ? occ.assignees.map((a) => a.userId)
-                : [];
+            const occAssignees = occ.assignees.map((a) => a.userId);
+            const taskAssignees = occ.task?.assignees.map((a) => a.userId) || [];
             return {
-                ...occ,
-                assignedToIds: occAssigned,
-                assignedToId: occ.assignedToId ?? taskAssigned[0] ?? null,
-                task: {
-                    ...occ.task,
-                    assignedToIds: taskAssigned,
-                    attachments: [],
-                },
-                attachments: [],
+                id: occ.id,
+                title: occ.title,
+                status: occ.status,
+                priority: occ.priority,
+                remarks: occ.remarks,
+                projectId: occ.projectId,
+                clientId: occ.clientId,
+                occurrenceStart: occ.startDate,
+                occurrenceDue: occ.dueDate,
+                assignedToIds: occAssignees,
+                assignedToId: occ.assignedToId ?? taskAssignees[0] ?? null,
+                task: occ.task,
+                sequentialId: occ.sequentialId,
             };
         });
         const last = rows[rows.length - 1];
-        const next = last && last.startDate && last.id
+        const next = last && last.dueDate
             ? encodeCursor({
-                sd: luxon_1.DateTime.fromJSDate(last.startDate).toUTC().toISO(),
+                sd: luxon_1.DateTime.fromJSDate(last.dueDate).toUTC().toISO(),
                 id: String(last.id),
             })
             : null;
         res.json({
             occurrences,
-            window: { start: windowStart ?? null, end: windowEnd ?? null }, // full current year when dates are cleared
+            window: { start: windowStart, end: windowEnd },
             pagination: { take, nextCursor: next, count: occurrences.length },
-            filters: {
-                status: requested.length
-                    ? requested
-                    : ["ACTIVE_DEFAULT_EXCLUDES_COMPLETED_CANCELLED"],
-                assignedTo: assignedVals ?? "ALL",
-                clientId: clientVals ?? "ALL",
-                projectId: projectVals ?? "ALL",
-                q: q?.trim() || null,
-            },
         });
     }
     catch (err) {
         console.error("listTaskOccurrences error:", err);
-        res.status(500).json({ message: "Failed to list occurrences", err });
+        res.status(500).json({ message: "Failed to list task occurrences" });
     }
+}
+async function taskProjectSummary(req, res) {
+    const orgPrisma = await resolveOrgPrisma(req);
+    const { start, end, status, priority, assignedTo, managerId, q, durationMin, durationMax, } = req.query;
+    const AND = [];
+    const todayUTC = luxon_1.DateTime.utc().startOf("day");
+    const windowStart = start
+        ? luxon_1.DateTime.fromISO(start).startOf("day").toJSDate()
+        : luxon_1.DateTime.utc().startOf("month").toJSDate();
+    const windowEnd = end
+        ? luxon_1.DateTime.fromISO(end).endOf("day").toJSDate()
+        : luxon_1.DateTime.utc().endOf("month").toJSDate();
+    /* ---------- DATE / DURATION ---------- */
+    /* ---------- DATE / DURATION ---------- */
+    if (durationMin || durationMax) {
+        const min = durationMin != null ? Number(durationMin) : undefined;
+        const max = durationMax != null ? Number(durationMax) : undefined;
+        // 🔥 OVERDUE TASKS
+        if ((min != null && min < 0) || (max != null && max < 0)) {
+            AND.push({
+                dueDate: {
+                    lt: todayUTC.toJSDate(),
+                    gte: windowStart,
+                },
+            });
+        }
+        else {
+            // Upcoming / today tasks
+            AND.push({
+                dueDate: {
+                    gte: todayUTC.toJSDate(),
+                },
+            });
+            if (min != null) {
+                AND.push({
+                    dueDate: {
+                        gte: todayUTC.plus({ days: min }).toJSDate(),
+                    },
+                });
+            }
+            if (max != null) {
+                AND.push({
+                    dueDate: {
+                        lte: todayUTC.plus({ days: max }).toJSDate(),
+                    },
+                });
+            }
+        }
+    }
+    else {
+        const ws = start
+            ? luxon_1.DateTime.fromISO(start).startOf("day")
+            : luxon_1.DateTime.utc().startOf("month");
+        const we = end
+            ? luxon_1.DateTime.fromISO(end).endOf("day")
+            : luxon_1.DateTime.utc().endOf("month");
+        AND.push({ startDate: { lte: we.toJSDate() } });
+        AND.push({ dueDate: { gte: ws.toJSDate() } });
+    }
+    /* ---------- Filters ---------- */
+    if (status)
+        AND.push({ status: { in: toList(status) } });
+    else
+        AND.push({ NOT: { status: { in: ["COMPLETED", "CANCELLED"] } } });
+    if (priority)
+        AND.push({ priority: { in: toList(priority) } });
+    const assignedVals = toList(assignedTo);
+    if (assignedVals?.length) {
+        AND.push({
+            OR: [
+                { assignedToId: { in: assignedVals } },
+                { assignees: { some: { userId: { in: assignedVals } } } },
+                { task: { assignees: { some: { userId: { in: assignedVals } } } } },
+            ],
+        });
+    }
+    const managerVals = toList(managerId);
+    if (managerVals?.length) {
+        AND.push({
+            task: {
+                project: {
+                    head: { in: managerVals },
+                },
+            },
+        });
+    }
+    if (q?.trim()) {
+        AND.push({
+            OR: [
+                { title: { contains: q, mode: "insensitive" } },
+                { remarks: { contains: q, mode: "insensitive" } },
+                { task: { title: { contains: q, mode: "insensitive" } } },
+            ],
+        });
+    }
+    if (req.user?.role === "MANAGER") {
+        AND.push({
+            task: {
+                project: {
+                    head: req.user.id,
+                },
+            },
+        });
+    }
+    /* ---------- GROUP ---------- */
+    const rows = await orgPrisma.taskOccurrence.groupBy({
+        by: ["projectId"],
+        where: { AND },
+        _count: { _all: true },
+    });
+    if (!rows.length)
+        return res.json([]);
+    const projects = await orgPrisma.project.findMany({
+        where: { id: { in: rows.map((r) => r.projectId).filter(Boolean) } },
+        select: { id: true, name: true },
+    });
+    const map = new Map(projects.map((p) => [p.id, p.name]));
+    res.json(rows.map((r) => ({
+        projectId: r.projectId ?? "general",
+        projectName: map.get(r.projectId) ?? "General",
+        count: r._count._all,
+    })));
+}
+async function listMyTaskOccurrences(req, res) {
+    try {
+        const user = req.user;
+        if (!user) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+        const orgPrisma = await resolveOrgPrisma(req);
+        const { start, end, status, q, limit, durationMin, durationMax } = req.query;
+        /* ---------------------------------------------------
+           1. DATE WINDOW (optional, overlaps)
+        --------------------------------------------------- */
+        let windowStart;
+        let windowEnd;
+        if (start && end) {
+            windowStart = new Date(new Date(start).setHours(0, 0, 0, 0));
+            windowEnd = new Date(new Date(end).setHours(23, 59, 59, 999));
+        }
+        /* ---------------------------------------------------
+           2. BASE WHERE
+        --------------------------------------------------- */
+        const AND = [];
+        // Assigned to current user (occurrence OR task)
+        AND.push({
+            OR: [
+                { assignedToId: user.id },
+                { assignees: { some: { userId: user.id } } },
+                { task: { assignees: { some: { userId: user.id } } } },
+            ],
+        });
+        const hasDuration = durationMin || durationMax;
+        if (!hasDuration && windowStart && windowEnd) {
+            AND.push({ startDate: { lte: windowEnd } });
+            AND.push({ dueDate: { gte: windowStart } });
+        }
+        // Status
+        if (status) {
+            AND.push({ status: status.toUpperCase() });
+        }
+        else {
+            AND.push({
+                NOT: { status: { in: ["COMPLETED", "CANCELLED"] } },
+            });
+        }
+        // Search
+        if (q?.trim()) {
+            AND.push({
+                OR: [
+                    { title: { contains: q.trim(), mode: "insensitive" } },
+                    { remarks: { contains: q.trim(), mode: "insensitive" } },
+                    { task: { title: { contains: q.trim(), mode: "insensitive" } } },
+                ],
+            });
+        }
+        /* ---------------------------------------------------
+       3. DURATION FILTER (DB LEVEL – FIXED)
+    --------------------------------------------------- */
+        if (durationMin || durationMax) {
+            const todayUTC = new Date();
+            todayUTC.setHours(0, 0, 0, 0);
+            const min = durationMin != null ? Number(durationMin) : undefined;
+            const max = durationMax != null ? Number(durationMax) : undefined;
+            // 🔥 OVERDUE CASE
+            if ((min != null && min < 0) || (max != null && max < 0)) {
+                AND.push({
+                    dueDate: {
+                        lt: todayUTC,
+                        gte: windowStart ?? todayUTC,
+                    },
+                });
+            }
+            else {
+                // Upcoming / today
+                AND.push({
+                    dueDate: {
+                        gte: todayUTC,
+                    },
+                });
+                if (min != null) {
+                    const minDate = new Date(todayUTC);
+                    minDate.setDate(minDate.getDate() + min);
+                    AND.push({ dueDate: { gte: minDate } });
+                }
+                if (max != null) {
+                    const maxDate = new Date(todayUTC);
+                    maxDate.setDate(maxDate.getDate() + max);
+                    AND.push({ dueDate: { lte: maxDate } });
+                }
+            }
+        }
+        /* ---------------------------------------------------
+           4. QUERY
+        --------------------------------------------------- */
+        const rows = await orgPrisma.taskOccurrence.findMany({
+            where: { AND },
+            orderBy: [{ dueDate: "asc" }, { id: "asc" }],
+            take: Math.min(500, Number(limit) || 200),
+            select: {
+                id: true,
+                title: true,
+                status: true,
+                priority: true,
+                startDate: true,
+                dueDate: true,
+                remarks: true,
+                projectId: true,
+                clientId: true,
+                assignedToId: true,
+                assignees: { select: { userId: true } },
+                task: {
+                    select: {
+                        id: true,
+                        title: true,
+                        projectId: true,
+                        clientId: true,
+                        assignees: { select: { userId: true } },
+                    },
+                },
+            },
+        });
+        /* ---------------------------------------------------
+           5. SHAPE RESPONSE
+        --------------------------------------------------- */
+        const occurrences = rows.map((r) => ({
+            ...r,
+            occurrenceStart: r.startDate,
+            occurrenceDue: r.dueDate,
+            assignedToIds: Array.from(new Set([
+                ...(r.assignees?.map((a) => a.userId) ?? []),
+                ...(r.task?.assignees?.map((a) => a.userId) ?? []),
+            ])),
+            projectId: r.projectId ?? r.task?.projectId ?? null,
+            clientId: r.clientId ?? r.task?.clientId ?? null,
+        }));
+        res.json({
+            occurrences,
+            meta: {
+                durationMin: durationMin ?? null,
+                durationMax: durationMax ?? null,
+            },
+        });
+    }
+    catch (err) {
+        console.error("listMyTaskOccurrences error", err);
+        res.status(500).json({ message: "Failed to load my tasks" });
+    }
+}
+const KANBAN_WORKFLOW = {
+    OPEN: { title: "Open", color: "emerald", order: 1 },
+    PLANNING: { title: "Planning", color: "cyan", order: 2 },
+    IN_PROGRESS: { title: "In Progress", color: "amber", order: 3 },
+    ON_TRACK: { title: "On Track", color: "blue", order: 4 },
+    IN_TESTING: { title: "In Testing", color: "purple", order: 5 },
+    APPROVED: { title: "Approved", color: "indigo", order: 6 },
+    DELAYED: { title: "Delayed", color: "rose", order: 7 },
+    ON_HOLD: { title: "On Hold", color: "gray", order: 8 },
+    COMPLETED: { title: "Completed", color: "green", order: 9 },
+    CANCELLED: { title: "Cancelled", color: "slate", order: 10, hidden: true },
+};
+function resolveStatus(task) {
+    return org_client_1.TaskStatus[task.status];
+}
+// GET /api/kanban/columns
+function getKanbanColumns(req, res) {
+    const columns = Object.entries(KANBAN_WORKFLOW)
+        .filter(([, c]) => !c.hidden)
+        .sort((a, b) => a[1].order - b[1].order)
+        .map(([id, c]) => ({
+        id,
+        title: c.title,
+        color: c.color,
+    }));
+    res.json({ columns });
+}
+// GET /api/kanban/tasks
+// ?status=OPEN&cursor=...&limit=30
+async function getKanbanTasks(req, res) {
+    const { status, cursor, limit = 30 } = req.query;
+    const orgPrisma = await resolveOrgPrisma(req);
+    const rows = await orgPrisma.taskOccurrence.findMany({
+        where: {
+            status,
+            NOT: { status: "CANCELLED" },
+        },
+        orderBy: [{ dueDate: "asc" }, { id: "asc" }],
+        take: Number(limit),
+        ...(cursor && {
+            skip: 1,
+            cursor: { id: cursor },
+        }),
+    });
+    const nextCursor = rows.at(-1)?.id ?? null;
+    res.json({
+        tasks: rows,
+        nextCursor,
+    });
 }
 /**
  * Complete a specific occurrence
@@ -4539,3 +4900,152 @@ async function sendTaskCreationNotifications(orgPrisma, corePrisma, io, orgId, t
         console.error('Error in sendTaskCreationNotifications:', err);
     }
 }
+const getEmployeeDashboard = async (req, res) => {
+    try {
+        const user = req.user;
+        const orgId = user.orgId;
+        const { start, end } = req.query;
+        const dateStart = new Date(start);
+        const dateEnd = new Date(end);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const weekStart = new Date(today);
+        weekStart.setDate(today.getDate() - ((today.getDay() + 6) % 7)); // ISO Monday
+        weekStart.setHours(0, 0, 0, 0);
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekStart.getDate() + 6);
+        weekEnd.setHours(23, 59, 59, 999);
+        const orgPrisma = await resolveOrgPrisma(req);
+        /* ================= CACHE ================= */
+        const cacheKey = (0, cache_1.orgKey)(orgId, "employee-dashboard", `u=${user.id}:s=${start}:e=${end}`);
+        const cached = await (0, cache_1.cacheGetJson)(cacheKey);
+        if (cached)
+            return res.json({ ...cached, cached: true });
+        /* ================= FETCH ================= */
+        const occurrences = await orgPrisma.taskOccurrence.findMany({
+            where: {
+                assignedToId: user.id,
+                OR: [
+                    { startDate: { gte: dateStart, lte: dateEnd } },
+                    { dueDate: { gte: dateStart, lte: dateEnd } },
+                    { completedAt: { gte: dateStart, lte: dateEnd } },
+                ],
+            },
+            include: {
+                task: {
+                    select: {
+                        title: true,
+                        status: true,
+                        priority: true,
+                    },
+                },
+            },
+            orderBy: { updatedAt: "desc" },
+        });
+        /* ================= HELPERS ================= */
+        const getStatus = (t) => (t.status || t.task?.status || "OPEN").toUpperCase();
+        const isCancelled = (t) => getStatus(t) === "CANCELLED";
+        const isCompleted = (t) => getStatus(t) === "COMPLETED";
+        const normalizeTask = (t) => ({
+            ...t,
+            occurrenceDue: t.dueDate ?? null,
+        });
+        const isOverdue = (t) => {
+            if (isCompleted(t) || isCancelled(t))
+                return false;
+            if (!t.dueDate)
+                return false;
+            return new Date(t.dueDate) < today;
+        };
+        /* ================= AGGREGATION ================= */
+        let completedTasks = 0;
+        let openTasks = 0;
+        let overdueTasks = 0;
+        const tasksByStatus = {};
+        const upcomingDeadlines = [];
+        const overdueTasksList = [];
+        const dueTodayList = [];
+        const dueThisWeekList = [];
+        const recentTasks = [];
+        for (const t of occurrences) {
+            if (isCancelled(t))
+                continue;
+            const status = getStatus(t);
+            const due = t.dueDate ? new Date(t.dueDate) : null;
+            tasksByStatus[status] = (tasksByStatus[status] || 0) + 1;
+            if (isCompleted(t))
+                completedTasks++;
+            else
+                openTasks++;
+            if (isOverdue(t)) {
+                overdueTasks++;
+                overdueTasksList.push(normalizeTask(t));
+            }
+            // ---------- DUE TODAY ----------
+            if (!isCompleted(t) &&
+                due &&
+                due >= today &&
+                due < new Date(today.getTime() + 24 * 60 * 60 * 1000)) {
+                dueTodayList.push(normalizeTask(t));
+            }
+            // ---------- DUE THIS WEEK ----------
+            if (!isCompleted(t) &&
+                due &&
+                due >= weekStart &&
+                due <= weekEnd &&
+                due >= today) {
+                dueThisWeekList.push(normalizeTask(t));
+            }
+            // ---------- UPCOMING ----------
+            if (!isCompleted(t) && due && due >= today) {
+                upcomingDeadlines.push(normalizeTask(t));
+            }
+            recentTasks.push({
+                id: t.id,
+                title: t.title || t.task?.title,
+                status,
+                priority: t.priority || t.task?.priority,
+                occurrenceDue: t.dueDate,
+                isCompleted: isCompleted(t),
+                lastActivityAt: t.completedAt || t.updatedAt || t.createdAt,
+            });
+        }
+        const assignedTasks = completedTasks + openTasks;
+        const completionRate = assignedTasks > 0
+            ? Math.round((completedTasks / assignedTasks) * 100)
+            : 0;
+        /* ================= RESPONSE ================= */
+        const payload = {
+            stats: {
+                assignedTasks,
+                completedTasks,
+                openTasks,
+                overdueTasks,
+                completionRate,
+                dueToday: dueTodayList.length,
+                dueThisWeek: dueThisWeekList.length,
+            },
+            tasksByStatus,
+            upcomingDeadlines: upcomingDeadlines
+                .sort((a, b) => new Date(a.occurrenceDue).getTime() -
+                new Date(b.occurrenceDue).getTime())
+                .slice(0, 10),
+            overdueTasksList: overdueTasksList
+                .sort((a, b) => new Date(a.occurrenceDue).getTime() -
+                new Date(b.occurrenceDue).getTime())
+                .slice(0, 10),
+            dueTodayList: dueTodayList.sort((a, b) => new Date(a.occurrenceDue).getTime() -
+                new Date(b.occurrenceDue).getTime()),
+            dueThisWeekList: dueThisWeekList.sort((a, b) => new Date(a.occurrenceDue).getTime() -
+                new Date(b.occurrenceDue).getTime()),
+            recentTasks: recentTasks.slice(0, 10),
+        };
+        await (0, cache_1.cacheSetJson)(cacheKey, payload, 60);
+        res.json(payload);
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Failed to load employee dashboard" });
+    }
+};
+exports.getEmployeeDashboard = getEmployeeDashboard;
