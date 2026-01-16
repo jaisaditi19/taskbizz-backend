@@ -1138,6 +1138,7 @@ export async function listTaskOccurrences(
             clientId: true,
             assignees: { select: { userId: true } },
             recurrenceRule: true,
+            recurrenceEndDate: true,
           },
         },
       },

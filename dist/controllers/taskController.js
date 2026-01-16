@@ -1022,6 +1022,7 @@ async function listTaskOccurrences(req, res) {
                         clientId: true,
                         assignees: { select: { userId: true } },
                         recurrenceRule: true,
+                        recurrenceEndDate: true,
                     },
                 },
             },
