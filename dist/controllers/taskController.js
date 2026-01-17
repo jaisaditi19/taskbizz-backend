@@ -802,6 +802,13 @@ function decodeCursor(s) {
         return null;
     }
 }
+function normalizeDateRange(start, end) {
+    if (!start || !end)
+        return {};
+    const s = luxon_1.DateTime.fromISO(start, { zone: "utc" }).startOf("day").toJSDate();
+    const e = luxon_1.DateTime.fromISO(end, { zone: "utc" }).endOf("day").toJSDate();
+    return { s, e };
+}
 async function listTaskOccurrences(req, res) {
     try {
         const orgPrisma = await resolveOrgPrisma(req);
@@ -818,23 +825,12 @@ async function listTaskOccurrences(req, res) {
         /* ---------------------------------------------------
            2. DATE WINDOW (DEFAULT = CURRENT MONTH)
         --------------------------------------------------- */
-        const hasStart = !!start?.trim();
-        const hasEnd = !!end?.trim();
-        let windowStart;
-        let windowEnd;
-        if (hasStart && hasEnd) {
-            windowStart = luxon_1.DateTime.fromISO(start, { zone: "utc" })
-                .startOf("day")
-                .toJSDate();
-            windowEnd = luxon_1.DateTime.fromISO(end, { zone: "utc" })
-                .endOf("day")
-                .toJSDate();
-        }
-        else {
-            const now = luxon_1.DateTime.utc();
-            windowStart = now.startOf("month").toJSDate();
-            windowEnd = now.endOf("month").toJSDate();
-        }
+        const { s: windowStart, e: windowEnd } = start && end
+            ? normalizeDateRange(start, end)
+            : {
+                s: luxon_1.DateTime.utc().startOf("month").toJSDate(),
+                e: luxon_1.DateTime.utc().endOf("month").toJSDate(),
+            };
         /* ---------------------------------------------------
            3. WHERE CLAUSE
         --------------------------------------------------- */
@@ -854,6 +850,11 @@ async function listTaskOccurrences(req, res) {
         if (hasDuration) {
             const min = durationMin != null ? Number(durationMin) : undefined;
             const max = durationMax != null ? Number(durationMax) : undefined;
+            console.log("Date filter:", {
+                windowStart,
+                windowEnd,
+                AND: JSON.stringify(AND, null, 2),
+            });
             // 🔥 OVERDUE CASE
             if ((min != null && min < 0) || (max != null && max < 0)) {
                 AND.push({
@@ -887,9 +888,13 @@ async function listTaskOccurrences(req, res) {
             }
         }
         else {
-            // normal month overlap
-            AND.push({ startDate: { lte: windowEnd } });
-            AND.push({ dueDate: { gte: windowStart } });
+            // Tasks with dueDate within the selected date range
+            AND.push({
+                dueDate: {
+                    gte: windowStart,
+                    lt: windowEnd, // ✅ Strictly within today
+                },
+            });
         }
         /* ---------- Status ---------- */
         const VALID_STATUSES = [
@@ -1122,14 +1127,13 @@ async function taskProjectSummary(req, res) {
         }
     }
     else {
-        const ws = start
-            ? luxon_1.DateTime.fromISO(start).startOf("day")
-            : luxon_1.DateTime.utc().startOf("month");
-        const we = end
-            ? luxon_1.DateTime.fromISO(end).endOf("day")
-            : luxon_1.DateTime.utc().endOf("month");
-        AND.push({ startDate: { lte: we.toJSDate() } });
-        AND.push({ dueDate: { gte: ws.toJSDate() } });
+        // ✅ DATE RANGE = WORK DATE (NO OVERDUE)
+        AND.push({
+            dueDate: {
+                gte: windowStart,
+                lte: windowEnd,
+            },
+        });
     }
     /* ---------- Filters ---------- */
     if (status)
@@ -1202,15 +1206,16 @@ async function listMyTaskOccurrences(req, res) {
             return res.status(401).json({ message: "Unauthorized" });
         }
         const orgPrisma = await resolveOrgPrisma(req);
-        const { start, end, status, q, limit, durationMin, durationMax } = req.query;
+        const { start, end, projectId, // ✅ ADD THIS
+        status, q, limit, nextCursor, durationMin, durationMax, } = req.query;
         /* ---------------------------------------------------
            1. DATE WINDOW (optional, overlaps)
         --------------------------------------------------- */
         let windowStart;
         let windowEnd;
         if (start && end) {
-            windowStart = new Date(new Date(start).setHours(0, 0, 0, 0));
-            windowEnd = new Date(new Date(end).setHours(23, 59, 59, 999));
+            windowStart = luxon_1.DateTime.fromISO(start, { zone: "utc" }).toJSDate();
+            windowEnd = luxon_1.DateTime.fromISO(end, { zone: "utc" }).toJSDate();
         }
         /* ---------------------------------------------------
            2. BASE WHERE
@@ -1224,10 +1229,28 @@ async function listMyTaskOccurrences(req, res) {
                 { task: { assignees: { some: { userId: user.id } } } },
             ],
         });
+        // ✅ ADD PROJECT FILTER
+        const projectVals = toList(projectId);
+        if (projectVals?.length) {
+            AND.push({
+                OR: [
+                    { projectId: { in: projectVals } },
+                    { task: { projectId: { in: projectVals } } },
+                ],
+            });
+        }
         const hasDuration = durationMin || durationMax;
-        if (!hasDuration && windowStart && windowEnd) {
-            AND.push({ startDate: { lte: windowEnd } });
-            AND.push({ dueDate: { gte: windowStart } });
+        const todayUTC = luxon_1.DateTime.utc().startOf("day");
+        const isOverdue = (durationMin && Number(durationMin) < 0) ||
+            (durationMax && Number(durationMax) < 0);
+        // ✅ STRICT DATE FILTER (NO OVERDUE)
+        if (windowStart && windowEnd && !hasDuration) {
+            AND.push({
+                dueDate: {
+                    gte: windowStart,
+                    lte: windowEnd,
+                },
+            });
         }
         // Status
         if (status) {
@@ -1249,19 +1272,17 @@ async function listMyTaskOccurrences(req, res) {
             });
         }
         /* ---------------------------------------------------
-       3. DURATION FILTER (DB LEVEL – FIXED)
-    --------------------------------------------------- */
-        if (durationMin || durationMax) {
-            const todayUTC = new Date();
-            todayUTC.setHours(0, 0, 0, 0);
+           3. DURATION FILTER (DB LEVEL – FIXED)
+        --------------------------------------------------- */
+        if (hasDuration) {
             const min = durationMin != null ? Number(durationMin) : undefined;
             const max = durationMax != null ? Number(durationMax) : undefined;
             // 🔥 OVERDUE CASE
             if ((min != null && min < 0) || (max != null && max < 0)) {
                 AND.push({
                     dueDate: {
-                        lt: todayUTC,
-                        gte: windowStart ?? todayUTC,
+                        lt: todayUTC.toJSDate(),
+                        ...(windowStart ? { gte: windowStart } : {}),
                     },
                 });
             }
@@ -1269,28 +1290,63 @@ async function listMyTaskOccurrences(req, res) {
                 // Upcoming / today
                 AND.push({
                     dueDate: {
-                        gte: todayUTC,
+                        gte: todayUTC.toJSDate(),
                     },
                 });
                 if (min != null) {
-                    const minDate = new Date(todayUTC);
-                    minDate.setDate(minDate.getDate() + min);
-                    AND.push({ dueDate: { gte: minDate } });
+                    AND.push({
+                        dueDate: {
+                            gte: todayUTC.plus({ days: min }).toJSDate(),
+                        },
+                    });
                 }
                 if (max != null) {
-                    const maxDate = new Date(todayUTC);
-                    maxDate.setDate(maxDate.getDate() + max);
-                    AND.push({ dueDate: { lte: maxDate } });
+                    AND.push({
+                        dueDate: {
+                            lte: todayUTC.plus({ days: max }).toJSDate(),
+                        },
+                    });
                 }
             }
         }
         /* ---------------------------------------------------
-           4. QUERY
+           4. PAGINATION (CURSOR-BASED)
+        --------------------------------------------------- */
+        const take = Math.min(100, Math.max(1, Number(limit) || 50));
+        const cursor = decodeCursor(nextCursor);
+        if (cursor) {
+            const sd = luxon_1.DateTime.fromISO(cursor.sd, { zone: "utc" });
+            if (sd.isValid) {
+                AND.push({
+                    OR: isOverdue
+                        ? [
+                            { dueDate: { lt: sd.toJSDate() } },
+                            {
+                                AND: [
+                                    { dueDate: { equals: sd.toJSDate() } },
+                                    { id: { gt: cursor.id } },
+                                ],
+                            },
+                        ]
+                        : [
+                            { dueDate: { gt: sd.toJSDate() } },
+                            {
+                                AND: [
+                                    { dueDate: { equals: sd.toJSDate() } },
+                                    { id: { gt: cursor.id } },
+                                ],
+                            },
+                        ],
+                });
+            }
+        }
+        /* ---------------------------------------------------
+           5. QUERY
         --------------------------------------------------- */
         const rows = await orgPrisma.taskOccurrence.findMany({
             where: { AND },
             orderBy: [{ dueDate: "asc" }, { id: "asc" }],
-            take: Math.min(500, Number(limit) || 200),
+            take,
             select: {
                 id: true,
                 title: true,
@@ -1302,6 +1358,7 @@ async function listMyTaskOccurrences(req, res) {
                 projectId: true,
                 clientId: true,
                 assignedToId: true,
+                sequentialId: true,
                 assignees: { select: { userId: true } },
                 task: {
                     select: {
@@ -1310,12 +1367,14 @@ async function listMyTaskOccurrences(req, res) {
                         projectId: true,
                         clientId: true,
                         assignees: { select: { userId: true } },
+                        recurrenceRule: true,
+                        recurrenceEndDate: true,
                     },
                 },
             },
         });
         /* ---------------------------------------------------
-           5. SHAPE RESPONSE
+           6. SHAPE RESPONSE
         --------------------------------------------------- */
         const occurrences = rows.map((r) => ({
             ...r,
@@ -1327,13 +1386,28 @@ async function listMyTaskOccurrences(req, res) {
             ])),
             projectId: r.projectId ?? r.task?.projectId ?? null,
             clientId: r.clientId ?? r.task?.clientId ?? null,
+            task: r.task
+                ? {
+                    ...r.task,
+                    recurrenceRule: r.task.recurrenceRule ?? null,
+                }
+                : null,
+            sequentialId: r.sequentialId,
         }));
+        // ✅ BUILD NEXT CURSOR
+        const last = rows[rows.length - 1];
+        const next = last && last.dueDate
+            ? encodeCursor({
+                sd: luxon_1.DateTime.fromJSDate(last.dueDate).toUTC().toISO(),
+                id: String(last.id),
+            })
+            : null;
         res.json({
             occurrences,
-            meta: {
-                durationMin: durationMin ?? null,
-                durationMax: durationMax ?? null,
-            },
+            window: windowStart && windowEnd
+                ? { start: windowStart, end: windowEnd }
+                : undefined,
+            pagination: { take, nextCursor: next, count: occurrences.length },
         });
     }
     catch (err) {
