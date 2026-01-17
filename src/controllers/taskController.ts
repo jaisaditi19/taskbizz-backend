@@ -1231,7 +1231,6 @@ export async function taskProjectSummary(
 
 
   /* ---------- DATE / DURATION ---------- */
-  /* ---------- DATE / DURATION ---------- */
   if (durationMin || durationMax) {
     const min = durationMin != null ? Number(durationMin) : undefined;
     const max = durationMax != null ? Number(durationMax) : undefined;

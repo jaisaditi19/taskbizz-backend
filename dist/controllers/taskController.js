@@ -1090,7 +1090,6 @@ async function taskProjectSummary(req, res) {
         ? luxon_1.DateTime.fromISO(end).endOf("day").toJSDate()
         : luxon_1.DateTime.utc().endOf("month").toJSDate();
     /* ---------- DATE / DURATION ---------- */
-    /* ---------- DATE / DURATION ---------- */
     if (durationMin || durationMax) {
         const min = durationMin != null ? Number(durationMin) : undefined;
         const max = durationMax != null ? Number(durationMax) : undefined;
