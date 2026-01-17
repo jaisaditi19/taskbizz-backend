@@ -1083,12 +1083,17 @@ async function taskProjectSummary(req, res) {
     const { start, end, status, priority, assignedTo, managerId, q, durationMin, durationMax, } = req.query;
     const AND = [];
     const todayUTC = luxon_1.DateTime.utc().startOf("day");
-    const windowStart = start
-        ? luxon_1.DateTime.fromISO(start).startOf("day").toJSDate()
-        : luxon_1.DateTime.utc().startOf("month").toJSDate();
-    const windowEnd = end
-        ? luxon_1.DateTime.fromISO(end).endOf("day").toJSDate()
-        : luxon_1.DateTime.utc().endOf("month").toJSDate();
+    // ✅ FIX: Use same logic as listMyTaskOccurrences
+    let windowStart;
+    let windowEnd;
+    if (start && end) {
+        windowStart = luxon_1.DateTime.fromISO(start, { zone: "utc" }).toJSDate(); // ✅ No .startOf("day")
+        windowEnd = luxon_1.DateTime.fromISO(end, { zone: "utc" }).toJSDate(); // ✅ No .endOf("day")
+    }
+    else {
+        windowStart = luxon_1.DateTime.utc().startOf("month").toJSDate();
+        windowEnd = luxon_1.DateTime.utc().endOf("month").toJSDate();
+    }
     /* ---------- DATE / DURATION ---------- */
     if (durationMin || durationMax) {
         const min = durationMin != null ? Number(durationMin) : undefined;
@@ -1126,11 +1131,11 @@ async function taskProjectSummary(req, res) {
         }
     }
     else {
-        // ✅ DATE RANGE = WORK DATE (NO OVERDUE)
+        // ✅ FIX: Use lte to match listMyTaskOccurrences
         AND.push({
             dueDate: {
                 gte: windowStart,
-                lte: windowEnd,
+                lte: windowEnd, // Keep lte since we're using exact dates
             },
         });
     }

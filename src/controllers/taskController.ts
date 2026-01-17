@@ -1221,14 +1221,18 @@ export async function taskProjectSummary(
 
   const AND: any[] = [];
   const todayUTC = DateTime.utc().startOf("day");
-  const windowStart = start
-    ? DateTime.fromISO(start).startOf("day").toJSDate()
-    : DateTime.utc().startOf("month").toJSDate();
 
-  const windowEnd = end
-    ? DateTime.fromISO(end).endOf("day").toJSDate()
-    : DateTime.utc().endOf("month").toJSDate();
+  // ✅ FIX: Use same logic as listMyTaskOccurrences
+  let windowStart: Date;
+  let windowEnd: Date;
 
+  if (start && end) {
+    windowStart = DateTime.fromISO(start, { zone: "utc" }).toJSDate(); // ✅ No .startOf("day")
+    windowEnd = DateTime.fromISO(end, { zone: "utc" }).toJSDate(); // ✅ No .endOf("day")
+  } else {
+    windowStart = DateTime.utc().startOf("month").toJSDate();
+    windowEnd = DateTime.utc().endOf("month").toJSDate();
+  }
 
   /* ---------- DATE / DURATION ---------- */
   if (durationMin || durationMax) {
@@ -1268,11 +1272,11 @@ export async function taskProjectSummary(
       }
     }
   } else {
-    // ✅ DATE RANGE = WORK DATE (NO OVERDUE)
+    // ✅ FIX: Use lte to match listMyTaskOccurrences
     AND.push({
       dueDate: {
         gte: windowStart,
-        lte: windowEnd,
+        lte: windowEnd, // Keep lte since we're using exact dates
       },
     });
   }
