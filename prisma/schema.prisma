@@ -50,6 +50,17 @@ enum PaymentPurpose {
   CONVERT_TRIAL
 }
 
+enum WeekDay {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+
 model User {
   id                  String         @id @default(uuid())
   name                String
@@ -76,6 +87,7 @@ model User {
   panNumber           String?
   departmentId        String?
   department          Department? @relation(fields: [departmentId], references: [id])
+  weeklyOffs          WeeklyOff[]
 }
 
 model RefreshToken {
@@ -210,4 +222,19 @@ model Department {
   users     User[]
 
   @@unique([orgId, name]) // prevents duplicate "HR" in same org
+}
+
+model WeeklyOff {
+  id        String   @id @default(uuid())
+  userId    String
+  day       WeekDay
+  isActive  Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, day])
+  @@index([userId])
 }
