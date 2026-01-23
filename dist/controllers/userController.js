@@ -339,6 +339,7 @@ const inviteUser = async (req, res) => {
         if (!req.user)
             return res.status(401).json({ message: "Unauthorized" });
         const { email, name, phone, address, city, state, pincode, role, panNumber, departmentId } = req.body;
+        const { weeklyOffDays = [] } = req.body;
         if (req.user.role !== "ADMIN") {
             return res
                 .status(403)
@@ -417,6 +418,14 @@ const inviteUser = async (req, res) => {
                 departmentId: true,
             },
         });
+        if (Array.isArray(weeklyOffDays) && weeklyOffDays.length > 0) {
+            await prisma.weeklyOff.createMany({
+                data: weeklyOffDays.map((day) => ({
+                    userId: newUser.id,
+                    day: day,
+                })),
+            });
+        }
         await (0, mailerSend_1.sendInviteEmail)(normalizedEmail, name || "there", plainPassword);
         const remaining = Math.max(seat.licensed - (seat.used + 1), 0);
         return res.status(201).json({
@@ -486,6 +495,12 @@ const getAllUsers = async (req, res) => {
                         name: true,
                     },
                 },
+                weeklyOffs: {
+                    where: { isActive: true },
+                    select: {
+                        day: true,
+                    },
+                },
             },
             orderBy: { createdAt: "desc" },
         });
@@ -510,6 +525,7 @@ const editUser = async (req, res) => {
         const prisma = (0, container_1.getCorePrisma)();
         const { id } = req.params;
         const { name, phone, role, status, address, city, state, pincode, panNumber, departmentId, } = req.body;
+        const { weeklyOffDays } = req.body;
         // Ensure target user is in same org
         const existingUser = await prisma.user.findFirst({
             where: { id: id, orgId: req.user.orgId },
@@ -558,6 +574,19 @@ const editUser = async (req, res) => {
                 pincode: true,
             },
         });
+        if (Array.isArray(weeklyOffDays)) {
+            await prisma.weeklyOff.deleteMany({
+                where: { userId: id },
+            });
+            if (weeklyOffDays.length > 0) {
+                await prisma.weeklyOff.createMany({
+                    data: weeklyOffDays.map((day) => ({
+                        userId: id,
+                        day: day,
+                    })),
+                });
+            }
+        }
         return res.json({
             message: "User updated successfully",
             user: updatedUser,
@@ -655,6 +684,7 @@ const bulkInviteUsers = async (req, res) => {
             const State = u.State ?? u.state ?? null;
             const Pincode = u.Pincode ?? u.pincode ?? null;
             const DepartmentId = u.DepartmentId || u.departmentId || null;
+            const WeeklyOff = u.WeeklyOff || u.weeklyOffDays || [];
             if (!Email || !Name) {
                 results.push({
                     email: Email || null,
@@ -720,6 +750,14 @@ const bulkInviteUsers = async (req, res) => {
                 },
                 select: { id: true, email: true, name: true },
             });
+            if (WeeklyOff.length) {
+                await prisma.weeklyOff.createMany({
+                    data: WeeklyOff.map((day) => ({
+                        userId: newUser.id,
+                        day,
+                    })),
+                });
+            }
             await (0, mailerSend_1.sendInviteEmail)(newUser.email, newUser.name, plainPassword);
             createdCount += 1;
             available -= 1;

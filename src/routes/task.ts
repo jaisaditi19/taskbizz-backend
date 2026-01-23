@@ -26,7 +26,8 @@ import {
   listMyTaskOccurrences,
   getKanbanColumns,
   getKanbanTasks,
-  getEmployeeDashboard
+  getEmployeeDashboard,
+  listWeeklyOffTasksForEmployee,
 } from "../controllers/taskController";
 import { authenticate } from "../middlewares/auth";
 import { authorize, authorizeAny } from "../middlewares/authorize";
@@ -137,6 +138,13 @@ router.delete(
   authenticate,
   deleteOccurrenceAttachment
 );
+
+router.get(
+  "/weekly-off/employee",
+  authenticate,
+  listWeeklyOffTasksForEmployee,
+);
+
 
 
 export default router;

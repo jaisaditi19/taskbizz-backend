@@ -39,4 +39,5 @@ router.delete("/:id/docs/:id", auth_1.authenticate, taskController_1.deleteTaskA
 router.patch("/occurrence/bulk", auth_1.authenticate, taskController_1.bulkUpdateOccurrences);
 router.post("/occurrence/copy-attachments", auth_1.authenticate, taskController_1.copyOccurrenceAttachments);
 router.delete("/occurrence/:occurrenceId/docs/:attachmentId", auth_1.authenticate, taskController_1.deleteOccurrenceAttachment);
+router.get("/weekly-off/employee", auth_1.authenticate, taskController_1.listWeeklyOffTasksForEmployee);
 exports.default = router;
