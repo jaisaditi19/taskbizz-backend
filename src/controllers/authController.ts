@@ -37,21 +37,34 @@ export const registerUser = async (req: Request, res: Response) => {
 
     const prisma = getCorePrisma();
 
-    const existingUser = await prisma.user.findUnique({ where: { email } });
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        OR: [{ email }, { phone }],
+      },
+    });
+
     if (existingUser) {
-      return res.status(409).json({ message: "User already exists" });
+      return res.status(409).json({
+        message:
+          existingUser.email === email
+            ? "User with this email already exists"
+            : "User with this phone number already exists",
+      });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const otpExpires = new Date(Date.now() + OTP_EXPIRY_MS);
 
+    const digits = phone.replace(/\D/g, "").slice(-10);
+    const normalizedPhone = `+91${digits}`;
+
     await prisma.user.create({
       data: {
         name,
         email,
         password: hashedPassword,
-        phone,
+        phone: normalizedPhone,
         otp,
         otpExpires,
         role: "ADMIN",
@@ -624,17 +637,39 @@ export const logoutUser = async (req: Request, res: Response) => {
 // Login with email/password - returns access token and sets refresh token cookie
 export const loginUser = async (req: Request, res: Response) => {
   try {
-    const { email, password } = req.body;
+    const { identifier, password } = req.body;
 
-    if (!email || !password) {
+    if (!identifier || !password) {
       return res
         .status(400)
-        .json({ message: "Email and password are required." });
+        .json({ message: "Email/Phone and password are required." });
     }
 
     const prisma = getCorePrisma();
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    const rawIdentifier = identifier.trim();
+
+    let emailIdentifier: string | null = null;
+    let phoneIdentifier: string | null = null;
+
+    // Detect email vs phone
+    if (rawIdentifier.includes("@")) {
+      emailIdentifier = rawIdentifier.toLowerCase();
+    } else {
+      // Normalize phone → +91XXXXXXXXXX
+      const digits = rawIdentifier.replace(/\D/g, "").slice(-10);
+      phoneIdentifier = `+91${digits}`;
+    }
+
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          emailIdentifier ? { email: emailIdentifier } : undefined,
+          phoneIdentifier ? { phone: phoneIdentifier } : undefined,
+        ].filter(Boolean) as any,
+      },
+    });
+
     if (!user || !user.password) {
       return res.status(400).json({ message: "Invalid credentials" });
     }

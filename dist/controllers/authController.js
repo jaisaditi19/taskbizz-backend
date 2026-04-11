@@ -31,19 +31,29 @@ const registerUser = async (req, res) => {
     try {
         const { name, email, password, phone, address, city, state, pincode } = req.body;
         const prisma = (0, container_1.getCorePrisma)();
-        const existingUser = await prisma.user.findUnique({ where: { email } });
+        const existingUser = await prisma.user.findFirst({
+            where: {
+                OR: [{ email }, { phone }],
+            },
+        });
         if (existingUser) {
-            return res.status(409).json({ message: "User already exists" });
+            return res.status(409).json({
+                message: existingUser.email === email
+                    ? "User with this email already exists"
+                    : "User with this phone number already exists",
+            });
         }
         const hashedPassword = await bcrypt_1.default.hash(password, 10);
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
         const otpExpires = new Date(Date.now() + OTP_EXPIRY_MS);
+        const digits = phone.replace(/\D/g, "").slice(-10);
+        const normalizedPhone = `+91${digits}`;
         await prisma.user.create({
             data: {
                 name,
                 email,
                 password: hashedPassword,
-                phone,
+                phone: normalizedPhone,
                 otp,
                 otpExpires,
                 role: "ADMIN",
@@ -544,14 +554,33 @@ exports.logoutUser = logoutUser;
 // Login with email/password - returns access token and sets refresh token cookie
 const loginUser = async (req, res) => {
     try {
-        const { email, password } = req.body;
-        if (!email || !password) {
+        const { identifier, password } = req.body;
+        if (!identifier || !password) {
             return res
                 .status(400)
-                .json({ message: "Email and password are required." });
+                .json({ message: "Email/Phone and password are required." });
         }
         const prisma = (0, container_1.getCorePrisma)();
-        const user = await prisma.user.findUnique({ where: { email } });
+        const rawIdentifier = identifier.trim();
+        let emailIdentifier = null;
+        let phoneIdentifier = null;
+        // Detect email vs phone
+        if (rawIdentifier.includes("@")) {
+            emailIdentifier = rawIdentifier.toLowerCase();
+        }
+        else {
+            // Normalize phone → +91XXXXXXXXXX
+            const digits = rawIdentifier.replace(/\D/g, "").slice(-10);
+            phoneIdentifier = `+91${digits}`;
+        }
+        const user = await prisma.user.findFirst({
+            where: {
+                OR: [
+                    emailIdentifier ? { email: emailIdentifier } : undefined,
+                    phoneIdentifier ? { phone: phoneIdentifier } : undefined,
+                ].filter(Boolean),
+            },
+        });
         if (!user || !user.password) {
             return res.status(400).json({ message: "Invalid credentials" });
         }

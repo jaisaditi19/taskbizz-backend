@@ -374,14 +374,24 @@ const inviteUser = async (req, res) => {
         if (!normalizedEmail) {
             return res.status(400).json({ message: "Email is required" });
         }
+        const normalizedPhone = phone
+            ? `+91${phone.replace(/\D/g, "").slice(-10)}`
+            : null;
         // Check if email already exists
-        const existingUser = await prisma.user.findUnique({
-            where: { email: normalizedEmail },
+        const existingUser = await prisma.user.findFirst({
+            where: {
+                OR: [
+                    { email: normalizedEmail },
+                    ...(normalizedPhone ? [{ phone: normalizedPhone }] : []),
+                ],
+            },
         });
         if (existingUser) {
-            return res
-                .status(400)
-                .json({ message: "User with this email already exists" });
+            return res.status(400).json({
+                message: existingUser.email === normalizedEmail
+                    ? "User with this email already exists"
+                    : "User with this phone number already exists",
+            });
         }
         // Generate temp password
         const plainPassword = Math.random().toString(36).slice(-8);
@@ -403,7 +413,7 @@ const inviteUser = async (req, res) => {
                 password: hashedPassword,
                 orgId,
                 isVerified: false,
-                phone: phone || null,
+                phone: normalizedPhone || null,
                 address: address ?? null,
                 city: city ?? null,
                 state: state ?? null,
