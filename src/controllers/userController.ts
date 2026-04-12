@@ -845,15 +845,28 @@ export const bulkInviteUsers = async (req: any, res: Response) => {
         continue;
       }
 
+      const normalizedPhone = Phone
+        ? `+91${Phone.toString().replace(/\D/g, "").slice(-10)}`
+        : null;
+
       // Already exists?
-      const existingUser = await prisma.user.findUnique({
-        where: { email: Email },
+      const existingUser = await prisma.user.findFirst({
+        where: {
+          OR: [
+            { email: Email },
+            ...(normalizedPhone ? [{ phone: normalizedPhone }] : []),
+          ],
+        },
       });
+
       if (existingUser) {
         results.push({
           email: Email,
           status: "skipped",
-          reason: "User already exists",
+          reason:
+            existingUser.email === Email
+              ? "User with this email already exists"
+              : "User with this phone already exists",
         });
         continue;
       }
@@ -896,7 +909,7 @@ export const bulkInviteUsers = async (req: any, res: Response) => {
         data: {
           email: Email,
           name: Name,
-          phone: Phone || null,
+          phone: normalizedPhone,
           panNumber: PanNumber || null,
           role: safeRole,
           status: "INVITED",
