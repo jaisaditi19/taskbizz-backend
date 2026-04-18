@@ -1,5 +1,7 @@
 import { Request, Response } from "express";
 import { getCorePrisma, getOrgPrisma } from "../di/container";
+import * as XLSX from "xlsx";
+import { getEmployeeSummaryData } from "../services/employeeSummary.service";
 
 type EmployeeRow = {
   id: string;
@@ -143,8 +145,7 @@ export const getEmployeeSummaryReport = async (
     /* ---------------- HELPERS ---------------- */
 
     const isTaskCompleted = (t: any) =>
-      t.isCompleted === true ||
-      (t.status || t.task?.status || "").toUpperCase() === "COMPLETED";
+      t.isCompleted === true || (t.status || "").toUpperCase() === "COMPLETED";
 
     const isOverdue = (t: any) => {
       const due = toDateSafe(t.dueDate);
@@ -164,14 +165,7 @@ export const getEmployeeSummaryReport = async (
       row.assigned += 1;
 
       if (isTaskCompleted(o)) {
-        const completedAt = o.completedAt ?? o.updatedAt;
-        if (
-          completedAt &&
-          (!startAt || completedAt >= startAt) &&
-          (!endAt || completedAt <= endAt)
-        ) {
-          row.completed += 1;
-        }
+        row.completed += 1;
         continue;
       }
 

@@ -93,8 +93,7 @@ const getEmployeeSummaryReport = async (req, res) => {
             });
         }
         /* ---------------- HELPERS ---------------- */
-        const isTaskCompleted = (t) => t.isCompleted === true ||
-            (t.status || t.task?.status || "").toUpperCase() === "COMPLETED";
+        const isTaskCompleted = (t) => t.isCompleted === true || (t.status || "").toUpperCase() === "COMPLETED";
         const isOverdue = (t) => {
             const due = toDateSafe(t.dueDate);
             if (!due)
@@ -112,12 +111,7 @@ const getEmployeeSummaryReport = async (req, res) => {
                 continue;
             row.assigned += 1;
             if (isTaskCompleted(o)) {
-                const completedAt = o.completedAt ?? o.updatedAt;
-                if (completedAt &&
-                    (!startAt || completedAt >= startAt) &&
-                    (!endAt || completedAt <= endAt)) {
-                    row.completed += 1;
-                }
+                row.completed += 1;
                 continue;
             }
             if (isOverdue(o)) {
