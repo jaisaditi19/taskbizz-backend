@@ -311,6 +311,8 @@ export const resetPasswordWithOtp = async (req: Request, res: Response) => {
         password: hashedPassword,
         otp: null,
         otpExpires: null,
+        failedLoginAttempts: 0,
+        forcePasswordReset: false,
       },
     });
 
@@ -676,9 +678,45 @@ export const loginUser = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "Invalid credentials" });
     }
 
+    if (user.forcePasswordReset) {
+      return res.status(403).json({
+        code: "PASSWORD_RESET_REQUIRED",
+        message: "Please reset your password before logging in.",
+      });
+    }
+
     const isMatch = await bcrypt.compare(password, user.password);
+
     if (!isMatch) {
-      return res.status(400).json({ message: "Invalid credentials" });
+      const updatedUser = await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          failedLoginAttempts: {
+            increment: 1,
+          },
+        },
+      });
+
+      const attempts = updatedUser.failedLoginAttempts ?? 0;
+
+      if (attempts >= 3) {
+        await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            forcePasswordReset: true,
+          },
+        });
+
+        return res.status(403).json({
+          code: "PASSWORD_RESET_REQUIRED",
+          message:
+            "Too many failed login attempts. Please reset your password.",
+        });
+      }
+
+      return res.status(400).json({
+        message: `Invalid credentials. ${3 - attempts} attempts remaining.`,
+      });
     }
 
     // If user not verified, generate OTP and send
@@ -705,6 +743,13 @@ export const loginUser = async (req: Request, res: Response) => {
         userId: user.id,
       });
     }
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        failedLoginAttempts: 0,
+      },
+    });
 
     // Sign tokens
     const accessToken = signAccessToken({

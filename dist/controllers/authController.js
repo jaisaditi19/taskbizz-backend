@@ -266,6 +266,8 @@ const resetPasswordWithOtp = async (req, res) => {
                 password: hashedPassword,
                 otp: null,
                 otpExpires: null,
+                failedLoginAttempts: 0,
+                forcePasswordReset: false,
             },
         });
         return res.status(200).json({ message: "Password reset successfully." });
@@ -585,9 +587,38 @@ const loginUser = async (req, res) => {
         if (!user || !user.password) {
             return res.status(400).json({ message: "Invalid credentials" });
         }
+        if (user.forcePasswordReset) {
+            return res.status(403).json({
+                code: "PASSWORD_RESET_REQUIRED",
+                message: "Please reset your password before logging in.",
+            });
+        }
         const isMatch = await bcrypt_1.default.compare(password, user.password);
         if (!isMatch) {
-            return res.status(400).json({ message: "Invalid credentials" });
+            const updatedUser = await prisma.user.update({
+                where: { id: user.id },
+                data: {
+                    failedLoginAttempts: {
+                        increment: 1,
+                    },
+                },
+            });
+            const attempts = updatedUser.failedLoginAttempts ?? 0;
+            if (attempts >= 3) {
+                await prisma.user.update({
+                    where: { id: user.id },
+                    data: {
+                        forcePasswordReset: true,
+                    },
+                });
+                return res.status(403).json({
+                    code: "PASSWORD_RESET_REQUIRED",
+                    message: "Too many failed login attempts. Please reset your password.",
+                });
+            }
+            return res.status(400).json({
+                message: `Invalid credentials. ${3 - attempts} attempts remaining.`,
+            });
         }
         // If user not verified, generate OTP and send
         if (!user.isVerified) {
@@ -610,6 +641,12 @@ const loginUser = async (req, res) => {
                 userId: user.id,
             });
         }
+        await prisma.user.update({
+            where: { id: user.id },
+            data: {
+                failedLoginAttempts: 0,
+            },
+        });
         // Sign tokens
         const accessToken = signAccessToken({
             id: user.id,
