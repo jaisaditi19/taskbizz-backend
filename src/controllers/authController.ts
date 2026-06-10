@@ -39,7 +39,7 @@ export const registerUser = async (req: Request, res: Response) => {
 
     const existingUser = await prisma.user.findFirst({
       where: {
-        OR: [{ email }, { phone }],
+        OR: [{ email }, ...(phone ? [{ phone }] : [])],
       },
     });
 
@@ -56,8 +56,10 @@ export const registerUser = async (req: Request, res: Response) => {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const otpExpires = new Date(Date.now() + OTP_EXPIRY_MS);
 
-    const digits = phone.replace(/\D/g, "").slice(-10);
-    const normalizedPhone = `+91${digits}`;
+    const normalizedPhone = phone
+      ? `+91${phone.replace(/\D/g, "").slice(-10)}`
+      : null;
+
 
     await prisma.user.create({
       data: {
