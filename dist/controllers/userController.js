@@ -631,6 +631,9 @@ const deleteUser = async (req, res) => {
         if (existingUser.id === req.user.id) {
             return res.status(400).json({ message: "You cannot delete yourself" });
         }
+        await prisma.weeklyOff.deleteMany({
+            where: { userId: id },
+        });
         await prisma.refreshToken.deleteMany({ where: { userId: id } });
         await prisma.user.delete({ where: { id: id } });
         return res.json({ message: "User deleted successfully" });
