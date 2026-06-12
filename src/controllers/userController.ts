@@ -676,12 +676,32 @@ export const editUser = async (req: any, res: Response) => {
       }
     }
 
+       const normalizedPhone = phone
+         ? `+91${phone.replace(/\D/g, "").slice(-10)}`
+         : null;
+    
+    if (normalizedPhone && normalizedPhone !== existingUser.phone) {
+      const phoneExists = await prisma.user.findFirst({
+        where: {
+          phone: normalizedPhone,
+          NOT: {
+            id: id,
+          },
+        },
+      });
+
+      if (phoneExists) {
+        return res.status(400).json({
+          message: "User with this phone number already exists",
+        });
+      }
+    }
 
     const updatedUser = await prisma.user.update({
       where: { id: id },
       data: {
         name: name ?? existingUser.name,
-        phone: phone ?? existingUser.phone,
+        phone: normalizedPhone ?? existingUser.phone,
         role: role ?? existingUser.role,
         panNumber: panNumber ?? existingUser.panNumber,
         status: status ?? existingUser.status,
