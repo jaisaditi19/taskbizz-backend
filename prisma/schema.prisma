@@ -9,6 +9,179 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+model User {
+  id                  String         @id @default(uuid())
+  name                String
+  email               String         @unique
+  password            String
+  phone               String?
+  otp                 String?
+  otpExpires          DateTime?
+  otpSentAt           DateTime?
+  role                Role           @default(ADMIN)
+  status              UserStatus     @default(PENDING_VERIFICATION)
+  isVerified          Boolean        @default(false)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  orgId               String?
+  address             String?
+  city                String?
+  state               String?
+  pincode             String?
+  clientCommunication Boolean?
+  panNumber           String?
+  departmentId        String?
+  failedLoginAttempts Int?           @default(0)
+  forcePasswordReset  Boolean?       @default(false)
+  payments            Payment[]
+  refreshTokens       RefreshToken[]
+  department          Department?    @relation(fields: [departmentId], references: [id])
+  organization        Organization?  @relation(fields: [orgId], references: [id])
+  weeklyOffs          WeeklyOff[]
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model Plan {
+  id            String         @id @default(uuid())
+  name          String         @unique
+  description   String?
+  badge         String?
+  highlighted   Boolean        @default(false)
+  minUsers      Int?
+  features      Json
+  prices        PlanPrice[]
+  subscriptions Subscription[]
+}
+
+model PlanPrice {
+  id            String        @id @default(uuid())
+  planId        String
+  period        BillingPeriod
+  price         Int
+  originalPrice Int
+  priceLabel    String
+  plan          Plan          @relation(fields: [planId], references: [id])
+
+  @@unique([planId, period], name: "planId_period")
+  @@index([planId])
+}
+
+model Organization {
+  id            String         @id @default(uuid())
+  name          String
+  dbName        String         @unique
+  logoUrl       String?
+  industry      String?
+  ownerId       String?
+  subscriptions Subscription[]
+  users         User[]
+}
+
+model Subscription {
+  id                String             @id @default(uuid())
+  orgId             String
+  planId            String?
+  status            SubscriptionStatus @default(ACTIVE)
+  startDate         DateTime
+  endDate           DateTime
+  userCount         Int?
+  billingCycle      String?
+  isTrial           Boolean            @default(false)
+  graceUntil        DateTime?
+  cancelAtPeriodEnd Boolean            @default(false)
+  payments          Payment[]
+  org               Organization       @relation(fields: [orgId], references: [id])
+  plan              Plan?              @relation(fields: [planId], references: [id], onDelete: Restrict)
+
+  @@index([orgId])
+  @@index([planId])
+}
+
+model Payment {
+  id                String          @id @default(cuid())
+  subscriptionId    String?
+  userId            String?
+  razorpayOrderId   String
+  razorpayPaymentId String
+  amount            Int
+  currency          String
+  status            PaymentStatus   @default(SUCCESS)
+  date              DateTime        @default(now())
+  purpose           PaymentPurpose?
+  meta              Json?
+  subscription      Subscription?   @relation(fields: [subscriptionId], references: [id])
+  user              User?           @relation(fields: [userId], references: [id])
+
+  @@index([subscriptionId])
+  @@index([userId])
+  @@index([razorpayOrderId])
+  @@index([razorpayPaymentId])
+}
+
+model ScheduledPlanChange {
+  id             String    @id @default(cuid())
+  orgId          String
+  subscriptionId String
+  newPlanId      String
+  effectiveAt    DateTime
+  appliedAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([orgId, effectiveAt])
+  @@index([subscriptionId, effectiveAt])
+}
+
+model PromoCode {
+  id                String    @id @default(cuid())
+  code              String    @unique
+  description       String?
+  discountType      String
+  discountValue     Float
+  appliesTo         String
+  active            Boolean   @default(true)
+  maxUses           Int?
+  usedCount         Int       @default(0)
+  onePerOrg         Boolean   @default(false)
+  minSeats          Int?
+  applicablePlanIds String?
+  startsAt          DateTime?
+  endsAt            DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+model Department {
+  id        String   @id @default(uuid())
+  name      String
+  orgId     String
+  createdAt DateTime @default(now())
+  users     User[]
+
+  @@unique([orgId, name])
+}
+
+model WeeklyOff {
+  id        String   @id @default(uuid())
+  userId    String
+  day       WeekDay
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, day])
+  @@index([userId])
+}
+
 enum Role {
   ADMIN
   MANAGER
@@ -60,181 +233,51 @@ enum WeekDay {
   SUNDAY
 }
 
-
-model User {
-  id                  String         @id @default(uuid())
-  name                String
-  email               String         @unique
-  password            String
-  phone               String?
-  otp                 String?
-  otpExpires          DateTime?
-  otpSentAt           DateTime?
-  role                Role           @default(ADMIN)
-  status              UserStatus     @default(PENDING_VERIFICATION)
-  isVerified          Boolean        @default(false)
-  createdAt           DateTime       @default(now())
-  updatedAt           DateTime       @updatedAt
-  orgId               String?
-  organization        Organization?  @relation(fields: [orgId], references: [id])
-  payments            Payment[]
-  address             String?
-  city                String?
-  state               String?
-  pincode             String?
-  clientCommunication Boolean?
-  refreshTokens       RefreshToken[]
-  panNumber           String?
-  departmentId        String?
-  department          Department? @relation(fields: [departmentId], references: [id])
-  weeklyOffs          WeeklyOff[]
+enum CalendarEntryType {
+  REMINDER
+  APPOINTMENT
 }
 
-model RefreshToken {
-  id        String   @id @default(uuid())
-  token     String   @unique
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  createdAt DateTime @default(now())
-  expiresAt DateTime
-  revoked   Boolean  @default(false)
+enum ClientStatus {
+  ACTIVE
+  INACTIVE
 }
 
-model Plan {
-  id            String         @id @default(uuid())
-  name          String         @unique
-  description   String?
-  badge         String?
-  highlighted   Boolean        @default(false)
-  minUsers      Int?
-  features      Json // e.g., ["Task Management", "Client Management"]
-  prices        PlanPrice[]
-  subscriptions Subscription[]
+enum EmailStatus {
+  SENT
+  FAILED
+  PENDING
 }
 
-model PlanPrice {
-  id            String        @id @default(uuid())
-  planId        String
-  plan          Plan          @relation(fields: [planId], references: [id])
-  period        BillingPeriod
-  price         Int // price per user/month
-  originalPrice Int
-  priceLabel    String
-
-  @@unique([planId, period], name: "planId_period")
-  @@index([planId])
+enum LogType {
+  COMPLETED
+  SKIPPED
+  RESCHEDULED
 }
 
-model Organization {
-  id            String         @id @default(uuid())
-  name          String
-  dbName        String         @unique
-  logoUrl       String?
-  industry      String?
-  ownerId       String?
-  subscriptions Subscription[]
-  users         User[]
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
 }
 
-model Subscription {
-  id     String       @id @default(uuid())
-  orgId  String
-  org    Organization @relation(fields: [orgId], references: [id])
-  planId String?
-  plan   Plan?        @relation(fields: [planId], references: [id], onDelete: Restrict)
-
-  status       SubscriptionStatus @default(ACTIVE)
-  startDate    DateTime
-  endDate      DateTime
-  payments     Payment[]
-  userCount    Int?
-  billingCycle String?
-
-  isTrial           Boolean   @default(false)
-  graceUntil        DateTime?
-  cancelAtPeriodEnd Boolean   @default(false)
-
-  @@index([orgId])
-  @@index([planId])
+enum RecurrenceFreq {
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
 }
 
-model Payment {
-  id                String        @id @default(cuid())
-  subscriptionId    String?
-  subscription      Subscription? @relation(fields: [subscriptionId], references: [id])
-  userId            String?
-  user              User?         @relation(fields: [userId], references: [id])
-  razorpayOrderId   String
-  razorpayPaymentId String
-  amount            Int
-  currency          String
-  status            PaymentStatus @default(SUCCESS)
-  date              DateTime      @default(now())
-
-  purpose PaymentPurpose?
-  meta    Json?
-
-  @@index([subscriptionId])
-  @@index([userId])
-  @@index([razorpayOrderId])
-  @@index([razorpayPaymentId])
-}
-
-model ScheduledPlanChange {
-  id             String    @id @default(cuid())
-  orgId          String
-  subscriptionId String
-  newPlanId      String
-  effectiveAt    DateTime
-  appliedAt      DateTime?
-  createdAt      DateTime  @default(now())
-
-  @@index([orgId, effectiveAt])
-  @@index([subscriptionId, effectiveAt])
-}
-
-model PromoCode {
-  id                String    @id @default(cuid())
-  code              String    @unique
-  description       String?
-  // Discount: either percent (0-100) or fixed amount currency
-  discountType      String // "PERCENT" | "FIXED"
-  discountValue     Float // percent (e.g. 20) or fixed (e.g. 1000 rupees)
-  appliesTo         String // "SEAT" | "TOTAL" (we'll use SEAT for per-seat discount)
-  active            Boolean   @default(true)
-  maxUses           Int? // null = unlimited
-  usedCount         Int       @default(0)
-  onePerOrg         Boolean   @default(false) // only allow one use per org
-  minSeats          Int? // minimum seats for promo to apply
-  applicablePlanIds String? // JSON string or comma-separated plan ids; null = any
-  startsAt          DateTime?
-  endsAt            DateTime?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-}
-
-model Department {
-  id        String   @id @default(uuid())
-  name      String
-  orgId     String
-  createdAt DateTime @default(now())
-
-  users     User[]
-
-  @@unique([orgId, name]) // prevents duplicate "HR" in same org
-}
-
-model WeeklyOff {
-  id        String   @id @default(uuid())
-  userId    String
-  day       WeekDay
-  isActive  Boolean  @default(true)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  user User @relation(fields: [userId], references: [id])
-
-  @@unique([userId, day])
-  @@index([userId])
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  ON_TRACK
+  DELAYED
+  IN_TESTING
+  ON_HOLD
+  APPROVED
+  CANCELLED
+  PLANNING
+  COMPLETED
 }
