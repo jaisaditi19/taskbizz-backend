@@ -34,6 +34,8 @@ import integrationsRouter from "./routes/integrations";
 import uploadRoutes from "./routes/uploadRoutes";
 import reportRoutes from "./routes/report";
 import deparmentRoutes from "./routes/department";
+// import taskOccurrenceRoutes from "./routes/taskOccurrence";
+import documentRoutes from "./routes/documentRoutes";
 
 // Jobs / other middlewares
 import "./jobs/cleanup";
@@ -167,6 +169,8 @@ app.use("/api/integrations", integrationsRouter);
 app.use("/api/uploads", uploadRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/departments", deparmentRoutes);
+// app.use("/api/task/occurrence", taskOccurrenceRoutes);
+app.use("/api/documents", documentRoutes);
 
 // ---------- Start server & graceful shutdown ----------
 const PORT = process.env.PORT || 8080;
