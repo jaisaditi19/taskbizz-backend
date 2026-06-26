@@ -107,26 +107,34 @@ export const createConversation = async (req: Request, res: Response) => {
       const existing = await orgPrisma.conversation.findFirst({
   where: {
     isGroup: false,
-    members: {
-      every: { userId: { in: distinctMemberIds } }, // both must be in
-      some: { userId: { in: distinctMemberIds } },  // at least one
-    },
+    AND: [
+      {
+        members: {
+          some: { userId: distinctMemberIds[0] },
+        },
+      },
+      {
+        members: {
+          some: { userId: distinctMemberIds[1] },
+        },
+      },
+    ],
   },
   include: {
-    members: {
-      include: {
-        user: { select: { userId: true, name: true, avatarUrl: true, lastActiveAt: true } },
-      },
-    },
+    members: true,
     messages: {
       take: 1,
       orderBy: { createdAt: "desc" },
-      include: {
-        sender: { select: { userId: true, name: true, avatarUrl: true } },
-      },
     },
   },
-});
+      });
+      
+      if (existing && existing.members.length === 2) {
+        return res.status(200).json({
+          conversation: existing,
+          existing: true,
+        });
+      }
 
 
       if (existing) {
