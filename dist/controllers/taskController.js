@@ -890,10 +890,20 @@ async function listTaskOccurrences(req, res) {
         }
         else {
             // Tasks with dueDate within the selected date range
+            // AND.push({
+            //   dueDate: {
+            //     gte: windowStart,
+            //     lt: windowEnd, // ✅ Strictly within today
+            //   },
+            // });
+            AND.push({
+                startDate: {
+                    lte: windowEnd,
+                },
+            });
             AND.push({
                 dueDate: {
                     gte: windowStart,
-                    lt: windowEnd, // ✅ Strictly within today
                 },
             });
         }
@@ -1133,10 +1143,20 @@ async function taskProjectSummary(req, res) {
     }
     else {
         // ✅ FIX: Use lte to match listMyTaskOccurrences
+        // AND.push({
+        //   dueDate: {
+        //     gte: windowStart,
+        //     lte: windowEnd, // Keep lte since we're using exact dates
+        //   },
+        // });
+        AND.push({
+            startDate: {
+                lte: windowEnd,
+            },
+        });
         AND.push({
             dueDate: {
                 gte: windowStart,
-                lte: windowEnd, // Keep lte since we're using exact dates
             },
         });
     }
@@ -1250,10 +1270,20 @@ async function listMyTaskOccurrences(req, res) {
             (durationMax && Number(durationMax) < 0);
         // ✅ STRICT DATE FILTER (NO OVERDUE)
         if (windowStart && windowEnd && !hasDuration) {
+            // AND.push({
+            //   dueDate: {
+            //     gte: windowStart,
+            //     lte: windowEnd,
+            //   },
+            // });
+            AND.push({
+                startDate: {
+                    lte: windowEnd,
+                },
+            });
             AND.push({
                 dueDate: {
                     gte: windowStart,
-                    lte: windowEnd,
                 },
             });
         }
