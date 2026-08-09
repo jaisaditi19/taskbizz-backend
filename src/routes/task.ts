@@ -7,7 +7,7 @@ import {
   updateTask,
   // updateTaskStatus,
   updateOccurrence,
-  generateOccurrencesForAllTasks,
+  // generateOccurrencesForAllTasks,
   listTasksByProject,
   uploadTaskFiles,
   updateOccurrenceStatus,
@@ -74,12 +74,12 @@ router.post("/occurrence/:id/complete", authenticate,requireWriteAccess, complet
 router.get("/by-project", authenticate, listTasksByProject); // List occurrences by project
 
 // Administrative Routes
-router.post(
-  "/generate-occurrences",
-  authenticate,
-  requireWriteAccess,
-  generateOccurrencesForAllTasks
-); // Background job for generating occurrences
+// router.post(
+//   "/generate-occurrences",
+//   authenticate,
+//   requireWriteAccess,
+//   generateOccurrencesForAllTasks
+// ); // Background job for generating occurrences
 
 // Legacy/Utility Routes (optional - for backward compatibility)
 // router.get("/:id/preview", authenticate, previewNextOccurrences);    // Preview future occurrences (less needed now)

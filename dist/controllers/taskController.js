@@ -37,7 +37,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getEmployeeDashboard = exports.getDashboard = exports.bulkUploadTasks = exports.updateTask = exports.updateOccurrence = exports.createTask = exports.uploadTaskFiles = void 0;
-exports.generateOccurrencesForAllTasks = generateOccurrencesForAllTasks;
 exports.listTaskOccurrences = listTaskOccurrences;
 exports.taskProjectSummary = taskProjectSummary;
 exports.listMyTaskOccurrences = listMyTaskOccurrences;
@@ -62,6 +61,9 @@ exports.listWeeklyOffTasksForEmployee = listWeeklyOffTasksForEmployee;
 // import { getOrgPrismaClient } from "../utils/tenantUtils";
 const luxon_1 = require("luxon");
 const multer_1 = __importDefault(require("multer"));
+const taskRecurrenceService_1 = require("../services/taskRecurrenceService");
+const taskRecurrenceService_2 = require("../services/taskRecurrenceService");
+const rrule_1 = require("../utils/rrule");
 const spacesUtils_1 = require("../utils/spacesUtils");
 const emailUtils_1 = require("../utils/emailUtils");
 // import { prisma } from "../prisma/coreClient";
@@ -82,6 +84,17 @@ async function resolveOrgPrisma(req) {
     if (!orgId)
         throw new Error("Org ID required");
     return await (0, container_1.getOrgPrisma)(orgId);
+}
+async function syncTaskAssignees(orgPrisma, taskId, userIds) {
+    await orgPrisma.$transaction(async (tx) => {
+        await tx.taskAssignee.deleteMany({ where: { taskId } });
+        if (userIds.length) {
+            await tx.taskAssignee.createMany({
+                data: userIds.map((userId) => ({ taskId, userId })),
+                skipDuplicates: true,
+            });
+        }
+    });
 }
 /**
  * Permission helper:
@@ -124,20 +137,6 @@ async function canEmployeeEditOccurrence(orgPrisma, corePrisma, req, occurrenceI
 }
 const storage = multer_1.default.memoryStorage();
 exports.uploadTaskFiles = (0, multer_1.default)({ storage }).array("attachments");
-/** De-dup guard: keep exactly one occurrence (prefers occurrenceIndex=0) */
-async function ensureSingleOccurrenceForTask(orgPrisma, taskId) {
-    const occs = await orgPrisma.taskOccurrence.findMany({
-        where: { taskId },
-        orderBy: [{ occurrenceIndex: "asc" }, { startDate: "asc" }],
-        select: { id: true, occurrenceIndex: true },
-    });
-    if (occs.length <= 1)
-        return;
-    const keep = occs.find((o) => o.occurrenceIndex === 0)?.id ?? occs[0].id;
-    await orgPrisma.taskOccurrence.deleteMany({
-        where: { taskId, id: { not: keep } },
-    });
-}
 function excelDateToJSDate(serial) {
     // Excel epoch starts Jan 1, 1900 → Unix epoch Jan 1, 1970
     const utc_days = Math.floor(serial - 25569);
@@ -163,309 +162,6 @@ function parseDateInput(input) {
             return iso.toJSDate();
     }
     return null;
-}
-/**
- * Parse recurrence rule from both simple format and RRULE format
- * Supports: DAILY, WEEKLY, MONTHLY, QUARTERLY, YEARLY
- * Also accepts RRULE like "FREQ=MONTHLY;INTERVAL=3" and maps to QUARTERLY.
- */
-function parseRecurrenceRule(rule) {
-    if (!rule)
-        return null;
-    const r = String(rule).trim().toUpperCase();
-    // Simple: DAILY/WEEKLY/MONTHLY/QUARTERLY/YEARLY
-    if (["DAILY", "WEEKLY", "MONTHLY", "QUARTERLY", "YEARLY"].includes(r))
-        return r;
-    // RRULE: e.g. FREQ=MONTHLY;INTERVAL=3 or FREQ=WEEKLY
-    if (r.startsWith("FREQ=") || r.includes("FREQ=")) {
-        const parts = r.split(";").map((p) => p.trim());
-        const freqPart = parts.find((p) => p.startsWith("FREQ="));
-        const intervalPart = parts.find((p) => p.startsWith("INTERVAL="));
-        const freq = freqPart ? freqPart.replace("FREQ=", "") : null;
-        const interval = intervalPart
-            ? parseInt(intervalPart.replace("INTERVAL=", ""), 10)
-            : NaN;
-        if (freq === "MONTHLY" && !isNaN(interval) && interval === 3)
-            return "QUARTERLY";
-        if (["DAILY", "WEEKLY", "MONTHLY", "YEARLY"].includes(freq ?? ""))
-            return freq;
-    }
-    return null;
-}
-/**
- * Occurrence generator (simple):
- * - DAILY/WEEKLY/MONTHLY/QUARTERLY/YEARLY
- * - ALWAYS deletes existing occurrences first (idempotent for ALL paths)
- * - For non-recurring (or missing end) => upsert exactly one occurrence (index 0)
- * - Steps in Asia/Kolkata to avoid date drift; stores in UTC
- *
- * Also copies task-level assignees to each generated occurrence's join table,
- * and sets legacy assignedToId on occurrences to the first assignee for compatibility.
- */
-async function generateTaskOccurrencesSimple(orgPrisma, task) {
-    const freq = parseRecurrenceRule(task.recurrenceRule);
-    const stepZone = "Asia/Kolkata";
-    const startLocal = luxon_1.DateTime.fromJSDate(task.startDate).setZone(stepZone);
-    const dueLocal = luxon_1.DateTime.fromJSDate(task.dueDate).setZone(stepZone);
-    const endLocal = task.recurrenceEndDate
-        ? luxon_1.DateTime.fromJSDate(task.recurrenceEndDate).setZone(stepZone).endOf("day")
-        : null;
-    // Preserve through end of CURRENT MONTH in task timezone
-    const preserveUntil = luxon_1.DateTime.now()
-        .setZone(stepZone)
-        .endOf("month")
-        .toUTC()
-        .toJSDate();
-    console.info("generateTaskOccurrencesSimple: start", {
-        taskId: task.id,
-        freq: parseRecurrenceRule(task.recurrenceRule),
-        startDate: task.startDate,
-        dueDate: task.dueDate,
-        recurrenceEndDate: task.recurrenceEndDate,
-        preserveUntil: preserveUntil.toISOString(),
-    });
-    // Single-upsert for non-recurring or missing end
-    if (!endLocal || !freq) {
-        await orgPrisma.taskOccurrence.upsert({
-            where: {
-                taskId_occurrenceIndex: { taskId: task.id, occurrenceIndex: 0 },
-            },
-            update: {
-                title: task.title,
-                description: task.description,
-                startDate: startLocal.toUTC().toJSDate(),
-                dueDate: dueLocal.toUTC().toJSDate(),
-                assignedToId: task.assignedToId,
-                priority: task.priority,
-                remarks: task.remarks,
-                status: task.status,
-                clientId: task.clientId,
-                projectId: task.projectId,
-            },
-            create: {
-                taskId: task.id,
-                occurrenceIndex: 0,
-                title: task.title,
-                description: task.description,
-                startDate: startLocal.toUTC().toJSDate(),
-                dueDate: dueLocal.toUTC().toJSDate(),
-                assignedToId: task.assignedToId,
-                priority: task.priority,
-                remarks: task.remarks,
-                status: task.status,
-                clientId: task.clientId,
-                projectId: task.projectId,
-            },
-        });
-        await ensureSingleOccurrenceForTask(orgPrisma, task.id);
-        await orgPrisma.task.update({
-            where: { id: task.id },
-            data: { lastGeneratedUntil: task.recurrenceEndDate ?? null },
-        });
-        return;
-    }
-    // Build full candidate series (UTC)
-    const allStartsUTC = [];
-    let occurrenceCount = 0;
-    while (true) {
-        let nextOccurrence;
-        switch (freq) {
-            case "DAILY":
-                nextOccurrence = startLocal.plus({ days: occurrenceCount });
-                break;
-            case "WEEKLY":
-                nextOccurrence = startLocal.plus({ weeks: occurrenceCount });
-                break;
-            case "MONTHLY":
-                nextOccurrence = startLocal.plus({ months: occurrenceCount });
-                break;
-            case "QUARTERLY":
-                nextOccurrence = startLocal.plus({ months: occurrenceCount * 3 });
-                break;
-            case "YEARLY":
-                nextOccurrence = startLocal.plus({ years: occurrenceCount });
-                break;
-            default:
-                return;
-        }
-        if (nextOccurrence > endLocal)
-            break;
-        allStartsUTC.push(nextOccurrence.toUTC().toJSDate());
-        occurrenceCount++;
-        if (occurrenceCount > 5000) {
-            console.warn("Breaking recurrence generation at 5000 occurrences");
-            break;
-        }
-    }
-    const durationMs = dueLocal.toMillis() - startLocal.toMillis();
-    // Transactional update: detect existing occurrences, delete only future ones,
-    // create missing preserved ones (current month/past) and future ones (OPEN).
-    await orgPrisma.$transaction(async (tx) => {
-        // fetch existing occurrences for this task
-        const existingOccs = await tx.taskOccurrence.findMany({
-            where: { taskId: task.id },
-            select: {
-                id: true,
-                startDate: true,
-                occurrenceIndex: true,
-                status: true,
-            },
-        });
-        const existingMap = new Map();
-        for (const r of existingOccs)
-            existingMap.set(new Date(r.startDate).toISOString(), r);
-        const beforeTotal = existingOccs.length;
-        const preservedBefore = existingOccs.filter((r) => new Date(r.startDate).getTime() <= preserveUntil.getTime()).length;
-        console.info(`Existing before regen: total=${beforeTotal}, preservedBefore=${preservedBefore}`);
-        // delete only future occurrences (startDate > preserveUntil)
-        const delRes = await tx.taskOccurrence.deleteMany({
-            where: { taskId: task.id, startDate: { gt: preserveUntil } },
-        });
-        const deletedCount = (delRes && (delRes.count ?? delRes)) ?? 0;
-        console.info(`Deleted future occurrences: ${deletedCount}`);
-        // split candidates into preserved (<= preserveUntil) and future (> preserveUntil)
-        const preservedCandidates = [];
-        const futureCandidates = [];
-        for (const dt of allStartsUTC) {
-            if (dt.getTime() <= preserveUntil.getTime())
-                preservedCandidates.push(dt);
-            else
-                futureCandidates.push(dt);
-        }
-        // detect preserved candidates missing in DB → create them (inherit task.status)
-        const preservedToCreate = [];
-        for (const dt of preservedCandidates) {
-            const iso = dt.toISOString();
-            if (!existingMap.has(iso)) {
-                preservedToCreate.push({
-                    taskId: task.id,
-                    title: task.title,
-                    description: task.description,
-                    startDate: dt,
-                    dueDate: new Date(dt.getTime() + durationMs),
-                    assignedToId: task.assignedToId,
-                    priority: task.priority,
-                    remarks: task.remarks,
-                    status: task.status,
-                    clientId: task.clientId,
-                    projectId: task.projectId,
-                });
-            }
-        }
-        const preservedCountAfter = preservedCandidates.length;
-        // build creation list with correct occurrenceIndex
-        const occurrencesToCreate = [];
-        // preserved missing ones: index = position in preservedCandidates
-        const preservedIndexMap = new Map();
-        preservedCandidates.forEach((dt, i) => preservedIndexMap.set(dt.toISOString(), i));
-        for (const p of preservedToCreate) {
-            const iso = p.startDate.toISOString();
-            const idx = preservedIndexMap.get(iso) ?? 0;
-            occurrencesToCreate.push({ ...p, occurrenceIndex: idx });
-        }
-        // future candidates: indices start from preservedCountAfter
-        futureCandidates.forEach((dt, i) => {
-            occurrencesToCreate.push({
-                taskId: task.id,
-                title: task.title,
-                description: task.description,
-                startDate: dt,
-                dueDate: new Date(dt.getTime() + durationMs),
-                assignedToId: task.assignedToId,
-                priority: task.priority,
-                remarks: task.remarks,
-                status: "OPEN",
-                clientId: task.clientId,
-                projectId: task.projectId,
-                occurrenceIndex: preservedCountAfter + i,
-            });
-        });
-        console.info(`Will create preservedMissing=${preservedToCreate.length} future=${futureCandidates.length} total=${occurrencesToCreate.length}`);
-        if (occurrencesToCreate.length) {
-            await tx.taskOccurrence.createMany({
-                data: occurrencesToCreate,
-                skipDuplicates: true,
-            });
-        }
-        // ---- NEW: ensure every future occurrence (existing or newly created) has status = "OPEN" ----
-        await tx.taskOccurrence.updateMany({
-            where: { taskId: task.id, startDate: { gt: preserveUntil } },
-            data: { status: "OPEN" },
-        });
-        // copy task-level assignees to newly created occurrences (and set assignedToId)
-        try {
-            const taskAssignees = await tx.taskAssignee.findMany({
-                where: { taskId: task.id },
-                select: { userId: true },
-            });
-            const userIds = taskAssignees.map((a) => a.userId);
-            if (userIds.length) {
-                const allOccsNow = await tx.taskOccurrence.findMany({
-                    where: { taskId: task.id },
-                    select: { id: true, startDate: true },
-                });
-                const allStartSet = new Set(allStartsUTC.map((d) => d.toISOString()));
-                const occAssigneeCreate = [];
-                for (const occ of allOccsNow) {
-                    if (!allStartSet.has(new Date(occ.startDate).toISOString()))
-                        continue;
-                    await tx.taskOccurrence.update({
-                        where: { id: occ.id },
-                        data: { assignedToId: userIds[0] },
-                    });
-                    for (const uid of userIds)
-                        occAssigneeCreate.push({ occurrenceId: occ.id, userId: uid });
-                }
-                if (occAssigneeCreate.length) {
-                    await tx.taskOccurrenceAssignee.createMany({
-                        data: occAssigneeCreate,
-                        skipDuplicates: true,
-                    });
-                }
-            }
-        }
-        catch (e) {
-            console.warn("Failed to copy task assignees to occurrences:", e);
-        }
-        // update task.lastGeneratedUntil
-        await tx.task.update({
-            where: { id: task.id },
-            data: { lastGeneratedUntil: endLocal.toUTC().toJSDate() },
-        });
-        const afterTotal = await tx.taskOccurrence.count({
-            where: { taskId: task.id },
-        });
-        const afterPreserved = await tx.taskOccurrence.count({
-            where: { taskId: task.id, startDate: { lte: preserveUntil } },
-        });
-        console.info(`After: total=${afterTotal}, preserved=${afterPreserved}`);
-    });
-}
-/**
- * Auto-generate occurrences for all recurring tasks (background job)
- * Using simple generator; idempotent per task.
- */
-async function generateOccurrencesForAllTasks(req, res) {
-    try {
-        const orgId = req.user?.orgId;
-        if (!orgId)
-            return res.status(400).json({ message: "Org ID required" });
-        // Resolve DB clients via DI container
-        const orgPrisma = await resolveOrgPrisma(req);
-        const recurringTasks = await orgPrisma.task.findMany({
-            where: { isRecurring: true, recurrenceEndDate: { not: null } },
-        });
-        let generatedCount = 0;
-        for (const task of recurringTasks) {
-            await generateTaskOccurrencesSimple(orgPrisma, task);
-            generatedCount++;
-        }
-        res.json({ message: `Generated occurrences for ${generatedCount} tasks` });
-    }
-    catch (err) {
-        console.error("generateOccurrencesForAllTasks error:", err);
-        res.status(500).json({ message: "Failed to generate occurrences", err });
-    }
 }
 /**
  * Create a task and generate its occurrences (simple recurrence)
@@ -540,11 +236,16 @@ exports.createTask = [
             }
             if (!Array.isArray(customValues))
                 customValues = [];
-            let simpleRule = null;
-            if (recurrenceRule)
-                simpleRule = parseRecurrenceRule(recurrenceRule);
-            if (!simpleRule && repeatNature)
-                simpleRule = parseRecurrenceRule(repeatNature);
+            const simpleRule = typeof recurrenceRule === "string" && recurrenceRule.trim() !== ""
+                ? recurrenceRule.trim()
+                : typeof repeatNature === "string" && repeatNature.trim() !== ""
+                    ? repeatNature.trim()
+                    : null;
+            if (simpleRule && !(0, rrule_1.parseRecurrenceRule)(simpleRule)) {
+                return res
+                    .status(400)
+                    .json({ message: `Invalid recurrenceRule: "${simpleRule}"` });
+            }
             // Upload attachments
             let attachmentKeys = [];
             if (req.files && Array.isArray(req.files)) {
@@ -566,42 +267,35 @@ exports.createTask = [
                 }
             }
             // Create Task (no task-level assignees; no task.assignedToId)
-            const createdTask = await orgPrisma.task.create({
-                data: {
-                    clientId: normalizedClientId,
-                    projectId: normalizedProjectId,
-                    title,
-                    description,
-                    startDate: luxon_1.DateTime.fromISO(startDate, { zone: "utc" }).toJSDate(),
-                    dueDate: luxon_1.DateTime.fromISO(dueDate, { zone: "utc" }).toJSDate(),
-                    assignedToId: null, // occurrence-only
-                    priority,
-                    remarks,
-                    status,
-                    recurrenceRule: simpleRule,
-                    recurrenceEndDate: recurrenceEndDate
-                        ? luxon_1.DateTime.fromISO(recurrenceEndDate, { zone: "utc" }).toJSDate()
-                        : null,
-                    isRecurring: !!simpleRule,
-                    createdById: req.user.id,
-                    attachments: {
-                        createMany: { data: attachmentKeys.map((key) => ({ key })) },
-                    },
-                    customValues: {
-                        create: customValues.map((cv) => ({
-                            fieldId: cv.fieldId,
-                            value: cv.value,
-                        })),
-                    },
+            const createdTask = await (0, taskRecurrenceService_1.createTaskWithSchedule)(orgPrisma, {
+                clientId: normalizedClientId,
+                projectId: normalizedProjectId,
+                title,
+                description,
+                startDate: luxon_1.DateTime.fromISO(startDate, { zone: "utc" }).toJSDate(),
+                dueDate: luxon_1.DateTime.fromISO(dueDate, { zone: "utc" }).toJSDate(),
+                assignedToId: null,
+                priority,
+                remarks,
+                status,
+                recurrenceRule: simpleRule, // still parseRecurrenceRule-compatible; see note below
+                recurrenceEndDate: recurrenceEndDate
+                    ? luxon_1.DateTime.fromISO(recurrenceEndDate, { zone: "utc" }).toJSDate()
+                    : null,
+                isRecurring: !!simpleRule,
+                createdById: req.user.id,
+                attachments: {
+                    createMany: { data: attachmentKeys.map((key) => ({ key })) },
                 },
-                include: {
-                    attachments: true,
-                    customValues: { include: { field: true } },
+                customValues: {
+                    create: customValues.map((cv) => ({
+                        fieldId: cv.fieldId,
+                        value: cv.value,
+                    })),
                 },
             });
-            // Generate occurrences
-            await generateTaskOccurrencesSimple(orgPrisma, createdTask);
             // --- after: await generateTaskOccurrencesSimple(orgPrisma, createdTask);
+            await syncTaskAssignees(orgPrisma, createdTask.id, assignedToIds);
             if (assignedToIds.length > 0) {
                 // fetch new occurrence ids for this task
                 const occs = await orgPrisma.taskOccurrence.findMany({
@@ -1883,7 +1577,9 @@ exports.updateTask = [
         try {
             const taskId = req.params.id;
             const { clientId, projectId, title, description, startDate, dueDate, assignedToId, // legacy single (fallback)
-            assignedToIds: rawAssignedToIds, priority, remarks, status, recurrenceRule, recurrenceEndDate, repeatNature, updateFutureOccurrences = true, customValues: rawCustomValues = [], } = req.body;
+            assignedToIds: rawAssignedToIds, priority, remarks, status, recurrenceRule, recurrenceEndDate, repeatNature, 
+            // updateFutureOccurrences = true,
+            scope = "ALL", anchorOccurrenceId, customValues: rawCustomValues = [], } = req.body;
             // Normalize FK strings
             const normalizedClientId = typeof clientId === "string" && clientId.trim() !== ""
                 ? clientId
@@ -1982,172 +1678,64 @@ exports.updateTask = [
             // 🔍 Detect if Project or Client changed
             const isProjectChanged = existingTask.projectId !== normalizedProjectId;
             const isClientChanged = existingTask.clientId !== normalizedClientId;
-            // Flags & parsing
-            const updateDatesFlag = req.body.updateDates === true ||
-                String(req.body.updateDates).toLowerCase() === "true";
-            const updateFutureOccurrencesFlag = updateFutureOccurrences === true ||
-                String(updateFutureOccurrences).toLowerCase() === "true";
-            const rawRecurrenceInput = typeof recurrenceRule === "string" && recurrenceRule.trim() !== ""
-                ? recurrenceRule.trim()
-                : typeof repeatNature === "string" && repeatNature.trim() !== ""
-                    ? repeatNature.trim()
-                    : null;
-            const parsedSimpleRule = parseRecurrenceRule(rawRecurrenceInput);
-            const wasRecurring = existingTask.isRecurring;
-            const willBeRecurring = !!rawRecurrenceInput;
-            const isRecurrenceStatusChanged = wasRecurring !== willBeRecurring;
-            const parseISO = (v) => v ? luxon_1.DateTime.fromISO(v, { zone: "utc" }) : null;
-            const isValidDT = (dt) => !!dt && dt.isValid;
-            const startDT = (willBeRecurring ? true : updateDatesFlag)
-                ? parseISO(startDate)
-                : null;
-            const dueDT = (willBeRecurring ? true : updateDatesFlag)
-                ? parseISO(dueDate)
-                : null;
-            const newStartDate = (willBeRecurring ? true : updateDatesFlag) && isValidDT(startDT)
-                ? startDT.toJSDate()
-                : existingTask.startDate;
-            const newDueDate = (willBeRecurring ? true : updateDatesFlag) && isValidDT(dueDT)
-                ? dueDT.toJSDate()
-                : existingTask.dueDate;
-            const newRecurrenceEndDate = recurrenceEndDate
-                ? luxon_1.DateTime.fromISO(recurrenceEndDate, { zone: "utc" }).toJSDate()
-                : existingTask.recurrenceEndDate;
-            const normalizeRule = (r) => (r ? r.trim() : null);
-            const isRecurrenceRuleChanged = normalizeRule(existingTask.recurrenceRule) !==
-                normalizeRule(rawRecurrenceInput ?? null);
-            const isStartDateChanged = Math.abs(newStartDate.getTime() - existingTask.startDate.getTime()) >
-                60000;
-            const isDueDateChanged = Math.abs(newDueDate.getTime() - existingTask.dueDate.getTime()) > 60000;
-            const isEndDateChanged = (existingTask.recurrenceEndDate?.getTime() || 0) !==
-                (newRecurrenceEndDate?.getTime() || 0);
-            const needsOccurrenceRegeneration = isRecurrenceRuleChanged ||
-                isRecurrenceStatusChanged ||
-                (willBeRecurring &&
-                    (isStartDateChanged || isDueDateChanged || isEndDateChanged));
-            // 🔴 Recurring → Non-recurring
-            if (isRecurrenceStatusChanged && !willBeRecurring) {
-                // ... (Keep existing conversion logic) ...
-                await orgPrisma.$transaction(async (tx) => {
-                    await tx.task.update({
-                        where: { id: taskId },
-                        data: {
-                            clientId: normalizedClientId,
-                            projectId: normalizedProjectId,
-                            title,
-                            description,
-                            startDate: newStartDate,
-                            dueDate: newDueDate,
-                            assignedToId: assignedToIds.length
-                                ? assignedToIds[0]
-                                : normalizedAssignedToId,
-                            priority,
-                            remarks,
-                            status,
-                            recurrenceRule: null,
-                            recurrenceEndDate: null,
-                            isRecurring: false,
-                            lastGeneratedUntil: null,
-                            customValues: {
-                                deleteMany: {},
-                                create: customValues.map((cv) => ({
-                                    fieldId: cv.fieldId,
-                                    value: cv.value,
-                                })),
-                            },
-                        },
-                    });
-                    await tx.taskOccurrence.deleteMany({ where: { taskId } });
-                    const occ = await tx.taskOccurrence.create({
-                        data: {
-                            taskId,
-                            occurrenceIndex: 0,
-                            title: title ?? existingTask.title,
-                            description: description ?? existingTask.description,
-                            startDate: newStartDate,
-                            dueDate: newDueDate,
-                            assignedToId: assignedToIds.length
-                                ? assignedToIds[0]
-                                : (normalizedAssignedToId ?? existingTask.assignedToId),
-                            priority: priority ?? existingTask.priority,
-                            remarks: remarks ?? existingTask.remarks,
-                            status: status ?? existingTask.status,
-                            clientId: clientId ?? existingTask.clientId,
-                            projectId: projectId ?? existingTask.projectId,
-                        },
-                        select: { id: true },
-                    });
-                    if (assignedToIds.length) {
-                        await tx.taskOccurrenceAssignee.deleteMany({
-                            where: { occurrenceId: occ.id },
-                        });
-                        await tx.taskOccurrenceAssignee.createMany({
-                            data: assignedToIds.map((uid) => ({
-                                occurrenceId: occ.id,
-                                userId: uid,
-                            })),
-                            skipDuplicates: true,
-                        });
-                    }
-                });
-                const finalTask = await orgPrisma.task.findUnique({
-                    where: { id: taskId },
-                    include: {
-                        attachments: true,
-                        customValues: { include: { field: true } },
-                    },
-                });
-                const attachmentsWithUrls = await Promise.all((finalTask?.attachments || []).map(async (att) => ({
-                    id: att.id,
-                    key: att.key,
-                    url: await (0, spacesUtils_1.getCachedFileUrlFromSpaces)(att.key, req.user.orgId),
-                })));
-                res.json({
-                    ...finalTask,
-                    attachments: attachmentsWithUrls,
-                    taskId: finalTask?.id,
-                    message: "Converted to non-recurring.",
-                });
-                const orgId = req.user.orgId;
-                req.io
-                    .to(`org:${orgId}`)
-                    .emit("task:updated", { orgId, task: { id: finalTask?.id } });
-                req.io.to(`org:${orgId}`).emit("occurrence:refresh", { orgId, taskId });
-                return;
+            // Only include a field in scheduleChange if the client actually sent
+            // it — this is what prevents ever silently falling back to the old
+            // date/rule (that was the root cause of the original bug).
+            const scheduleChange = {};
+            if (startDate !== undefined) {
+                const dt = luxon_1.DateTime.fromISO(startDate, { zone: "utc" });
+                if (dt.isValid)
+                    scheduleChange.startDate = dt.toJSDate();
             }
-            // 5) Update master task
-            const updated = await orgPrisma.task.update({
-                where: { id: taskId },
-                data: {
-                    clientId: normalizedClientId,
-                    projectId: normalizedProjectId,
-                    title,
-                    description,
-                    startDate: willBeRecurring
-                        ? newStartDate
-                        : updateDatesFlag
-                            ? newStartDate
-                            : undefined,
-                    dueDate: willBeRecurring
-                        ? newDueDate
-                        : updateDatesFlag
-                            ? newDueDate
-                            : undefined,
-                    assignedToId: assignedToIds.length
-                        ? assignedToIds[0]
-                        : normalizedAssignedToId,
-                    priority,
-                    remarks,
-                    status,
-                    recurrenceRule: rawRecurrenceInput ?? null,
-                    recurrenceEndDate: newRecurrenceEndDate,
-                    isRecurring: !!rawRecurrenceInput,
-                    lastGeneratedUntil: needsOccurrenceRegeneration ? null : undefined,
-                },
-                include: { attachments: true },
-            });
-            // Custom values update
-            if (Array.isArray(customValues)) {
+            if (dueDate !== undefined) {
+                const dt = luxon_1.DateTime.fromISO(dueDate, { zone: "utc" });
+                if (dt.isValid)
+                    scheduleChange.dueDate = dt.toJSDate();
+            }
+            if (recurrenceEndDate !== undefined) {
+                scheduleChange.recurrenceEndDate = recurrenceEndDate
+                    ? luxon_1.DateTime.fromISO(recurrenceEndDate, { zone: "utc" }).toJSDate()
+                    : null;
+            }
+            if (recurrenceRule !== undefined || repeatNature !== undefined) {
+                scheduleChange.recurrenceRule =
+                    typeof recurrenceRule === "string" && recurrenceRule.trim() !== ""
+                        ? recurrenceRule.trim()
+                        : typeof repeatNature === "string" && repeatNature.trim() !== ""
+                            ? repeatNature.trim()
+                            : null;
+            }
+            const scheduleTouched = Object.keys(scheduleChange).length > 0;
+            const templatePatch = {
+                title,
+                description,
+                priority,
+                remarks,
+                status,
+                clientId: normalizedClientId,
+                projectId: normalizedProjectId,
+                assignedToId: normalizedAssignedToId,
+                assignedToIds: assignedToIds.length ? assignedToIds : undefined,
+            };
+            // 5) Apply the update via the recurrence-aware service.
+            const serviceResult = scope === "THIS_AND_FOLLOWING"
+                ? await (0, taskRecurrenceService_2.splitSeries)(orgPrisma, taskId, anchorOccurrenceId, templatePatch, scheduleTouched ? scheduleChange : undefined)
+                : await (0, taskRecurrenceService_2.updateTaskAllScope)(orgPrisma, taskId, templatePatch, scheduleTouched ? scheduleChange : undefined);
+            const respondingTaskId = scope === "THIS_AND_FOLLOWING"
+                ? serviceResult.oldTask.id
+                : taskId;
+            if (rawAssignedToIds !== undefined || assignedToId !== undefined) {
+                await syncTaskAssignees(orgPrisma, respondingTaskId, assignedToIds);
+                if (scope === "THIS_AND_FOLLOWING") {
+                    await syncTaskAssignees(orgPrisma, serviceResult.newTask.id, assignedToIds);
+                }
+            }
+            // Custom values are independent of recurrence scope. Guarded by
+            // .length so an update that doesn't touch custom fields no longer
+            // silently wipes them (the old `if (Array.isArray(customValues))`
+            // was always true since it defaults to [], so every update — even
+            // ones that never mentioned customValues — cleared them).
+            if (Array.isArray(customValues) && customValues.length) {
                 await orgPrisma.task.update({
                     where: { id: taskId },
                     data: {
@@ -2161,153 +1749,45 @@ exports.updateTask = [
                     },
                 });
             }
-            // ✅ 5.5) CRITICAL FIX: Update ALL occurrences (History + Future) immediately if Project/Client changed.
-            // We do this BEFORE regeneration so that even preserved history occurrences get the new project ID.
+            // Project/client are referential-integrity fields, not historical
+            // facts — sync onto every occurrence, including completed/cancelled
+            // ones, unlike other content fields (matches your original "critical
+            // fix" intent).
             if (isProjectChanged || isClientChanged) {
                 await orgPrisma.taskOccurrence.updateMany({
-                    where: { taskId }, // No date filter = update everything
+                    where: { taskId },
                     data: {
                         clientId: normalizedClientId ?? undefined,
                         projectId: normalizedProjectId ?? undefined,
                     },
                 });
             }
-            // 6) Occurrence updates/regeneration
-            if (needsOccurrenceRegeneration) {
-                try {
-                    const freshTask = await orgPrisma.task.findUnique({
-                        where: { id: taskId },
-                    });
-                    if (freshTask && parseRecurrenceRule(freshTask.recurrenceRule)) {
-                        await generateTaskOccurrencesSimple(orgPrisma, freshTask);
-                        // Notify about regeneration
-                        const firstOccurrence = await orgPrisma.taskOccurrence.findFirst({
-                            where: { taskId },
-                            include: { assignees: { select: { userId: true } } },
-                        });
-                        if (firstOccurrence) {
-                            await (0, notify_1.notifyCounterparties)({
-                                orgPrisma,
-                                corePrisma: prisma,
-                                io: req.io,
-                                orgId: req.user.orgId,
-                                actor: { id: req.user.id, role: req.user.role },
-                                assigneeIds: firstOccurrence.assignees.map((a) => a.userId),
-                                payload: {
-                                    type: "TASK_UPDATED",
-                                    title: `Task updated: ${freshTask.title}`,
-                                    body: "Task occurrences have been regenerated",
-                                    taskId: freshTask.id,
-                                },
-                            });
-                        }
-                    }
-                }
-                catch (genErr) {
-                    console.error("Failed to generate occurrences:", genErr);
-                }
-            }
-            else {
-                // Non-regeneration logic: sync other fields to future only
-                if (updated.isRecurring && updateFutureOccurrencesFlag) {
-                    const now = luxon_1.DateTime.utc().toJSDate();
-                    // Get future, not completed occurrences
-                    const occsToSync = await orgPrisma.taskOccurrence.findMany({
-                        where: { taskId, startDate: { gte: now }, isCompleted: false },
-                        select: { id: true },
-                    });
-                    const occIds = occsToSync.map((o) => o.id);
-                    if (occIds.length) {
-                        await orgPrisma.taskOccurrence.updateMany({
-                            where: { id: { in: occIds } },
-                            data: {
-                                title: title || undefined,
-                                description: description !== undefined ? description : undefined,
-                                assignedToId: assignedToIds.length
-                                    ? assignedToIds[0]
-                                    : (normalizedAssignedToId ?? undefined),
-                                priority,
-                                remarks,
-                                status,
-                                // Redundant but safe: ensure future ones are definitely synced
-                                clientId: normalizedClientId ?? undefined,
-                                projectId: normalizedProjectId ?? undefined,
-                            },
-                        });
-                        // Update assignees for future occurrences
-                        if (assignedToIds.length > 0 || normalizedAssignedToId) {
-                            const userIds = assignedToIds.length
-                                ? assignedToIds
-                                : normalizedAssignedToId
-                                    ? [normalizedAssignedToId]
-                                    : [];
-                            await orgPrisma.taskOccurrenceAssignee.deleteMany({
-                                where: { occurrenceId: { in: occIds } },
-                            });
-                            if (userIds.length) {
-                                const createPayload = occIds.flatMap((occId) => userIds.map((uid) => ({ occurrenceId: occId, userId: uid })));
-                                const CHUNK = 500;
-                                for (let i = 0; i < createPayload.length; i += CHUNK) {
-                                    await orgPrisma.taskOccurrenceAssignee.createMany({
-                                        data: createPayload.slice(i, i + CHUNK),
-                                        skipDuplicates: true,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-                else if (!updated.isRecurring) {
-                    // Single task: update everything on the single occurrence
-                    const primaryAssignedId = assignedToIds.length
-                        ? assignedToIds[0]
-                        : (normalizedAssignedToId ?? null);
-                    await orgPrisma.taskOccurrence.updateMany({
-                        where: { taskId: updated.id, occurrenceIndex: 0 },
-                        data: {
-                            clientId: normalizedClientId ?? undefined,
-                            projectId: normalizedProjectId ?? undefined,
-                            title: title || undefined,
-                            description: description !== undefined ? description : undefined,
-                            startDate: updateDatesFlag ? newStartDate : undefined,
-                            dueDate: updateDatesFlag ? newDueDate : undefined,
-                            assignedToId: primaryAssignedId ?? undefined,
-                            priority,
-                            remarks,
-                            status,
+            if (scheduleTouched) {
+                const firstOccurrence = await orgPrisma.taskOccurrence.findFirst({
+                    where: { taskId },
+                    orderBy: { occurrenceIndex: "asc" },
+                    include: { assignees: { select: { userId: true } } },
+                });
+                if (firstOccurrence) {
+                    await (0, notify_1.notifyCounterparties)({
+                        orgPrisma,
+                        corePrisma: prisma,
+                        io: req.io,
+                        orgId: req.user.orgId,
+                        actor: { id: req.user.id, role: req.user.role },
+                        assigneeIds: firstOccurrence.assignees.map((a) => a.userId),
+                        payload: {
+                            type: "TASK_UPDATED",
+                            title: `Task updated: ${title || existingTask.title}`,
+                            body: "Task occurrences have been regenerated",
+                            taskId,
                         },
                     });
-                    // Replace join rows
-                    if (assignedToIds.length || normalizedAssignedToId) {
-                        const occ = await orgPrisma.taskOccurrence.findFirst({
-                            where: { taskId: updated.id, occurrenceIndex: 0 },
-                            select: { id: true },
-                        });
-                        if (occ) {
-                            await orgPrisma.taskOccurrenceAssignee.deleteMany({
-                                where: { occurrenceId: occ.id },
-                            });
-                            const userIds = assignedToIds.length
-                                ? assignedToIds
-                                : normalizedAssignedToId
-                                    ? [normalizedAssignedToId]
-                                    : [];
-                            if (userIds.length) {
-                                await orgPrisma.taskOccurrenceAssignee.createMany({
-                                    data: userIds.map((uid) => ({
-                                        occurrenceId: occ.id,
-                                        userId: uid,
-                                    })),
-                                    skipDuplicates: true,
-                                });
-                            }
-                        }
-                    }
                 }
             }
             // 7) Response
             const finalTask = await orgPrisma.task.findUnique({
-                where: { id: taskId },
+                where: { id: respondingTaskId },
                 include: {
                     attachments: true,
                     customValues: { include: { field: true } },
@@ -2318,7 +1798,7 @@ exports.updateTask = [
                 key: att.key,
                 url: await (0, spacesUtils_1.getCachedFileUrlFromSpaces)(att.key, req.user.orgId),
             })));
-            const responseMessage = needsOccurrenceRegeneration
+            const responseMessage = scheduleTouched
                 ? "Task updated and occurrences regenerated"
                 : "Task updated successfully";
             res.json({
@@ -2326,12 +1806,18 @@ exports.updateTask = [
                 attachments: attachmentsWithUrls,
                 message: responseMessage,
                 taskAssignedToIds: [],
+                // Only present for scope === "THIS_AND_FOLLOWING" — the id of the
+                // new series that starts at the split point.
+                newSeriesTaskId: scope === "THIS_AND_FOLLOWING"
+                    ? serviceResult.newTask.id
+                    : undefined,
                 debug: {
-                    regeneratedOccurrences: needsOccurrenceRegeneration,
+                    scope,
+                    regeneratedOccurrences: scheduleTouched,
                     changes: {
-                        recurrenceRule: isRecurrenceRuleChanged,
-                        startDate: isStartDateChanged,
-                        dueDate: isDueDateChanged,
+                        recurrenceRule: scheduleChange.recurrenceRule !== undefined,
+                        startDate: scheduleChange.startDate !== undefined,
+                        dueDate: scheduleChange.dueDate !== undefined,
                         projectChanged: isProjectChanged,
                     },
                 },
@@ -2352,8 +1838,16 @@ exports.updateTask = [
                     attachments: attachmentsWithUrls,
                 },
             });
-            if (needsOccurrenceRegeneration) {
-                req.io.to(`org:${orgId}`).emit("occurrence:refresh", { orgId, taskId });
+            if (scheduleTouched) {
+                req.io
+                    .to(`org:${orgId}`)
+                    .emit("occurrence:refresh", { orgId, taskId: respondingTaskId });
+                if (scope === "THIS_AND_FOLLOWING") {
+                    req.io.to(`org:${orgId}`).emit("occurrence:refresh", {
+                        orgId,
+                        taskId: serviceResult.newTask.id,
+                    });
+                }
             }
         }
         catch (err) {

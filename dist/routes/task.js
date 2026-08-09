@@ -26,7 +26,12 @@ router.put("/occurrence/:id", auth_1.authenticate, subscription_1.requireWriteAc
 router.post("/occurrence/:id/complete", auth_1.authenticate, subscription_1.requireWriteAccess, taskController_1.completeOccurrence); // Complete specific occurrence
 router.get("/by-project", auth_1.authenticate, taskController_1.listTasksByProject); // List occurrences by project
 // Administrative Routes
-router.post("/generate-occurrences", auth_1.authenticate, subscription_1.requireWriteAccess, taskController_1.generateOccurrencesForAllTasks); // Background job for generating occurrences
+// router.post(
+//   "/generate-occurrences",
+//   authenticate,
+//   requireWriteAccess,
+//   generateOccurrencesForAllTasks
+// ); // Background job for generating occurrences
 // Legacy/Utility Routes (optional - for backward compatibility)
 // router.get("/:id/preview", authenticate, previewNextOccurrences);    // Preview future occurrences (less needed now)
 router.post("/custom-fields", auth_1.authenticate, (0, authorize_1.authorizeAny)(["ADMIN", "MANAGER"]), subscription_1.requireWriteAccess, taskController_1.createCustomField);
