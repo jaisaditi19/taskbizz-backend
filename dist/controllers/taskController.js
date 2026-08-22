@@ -1977,7 +1977,7 @@ async function updateOccurrenceStatus(req, res) {
             recipients: { assignees: [] },
         };
         // Send notifications if status changed
-        if (statusChanged) {
+        if (statusChanged && status !== "CANCELLED") {
             const emailSubject = `Status Changed: ${taskTitle}`;
             const emailBody = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">

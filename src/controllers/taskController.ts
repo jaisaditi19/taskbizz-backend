@@ -2314,7 +2314,7 @@ export async function updateOccurrenceStatus(
     };
 
     // Send notifications if status changed
-    if (statusChanged) {
+    if (statusChanged && status !== "CANCELLED") {
       const emailSubject = `Status Changed: ${taskTitle}`;
       const emailBody = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -2334,7 +2334,7 @@ export async function updateOccurrenceStatus(
             ${
               updated.dueDate
                 ? `<p><strong>Due Date:</strong> ${new Date(
-                    updated.dueDate
+                    updated.dueDate,
                   ).toLocaleDateString()}</p>`
                 : ""
             }
@@ -2375,7 +2375,7 @@ export async function updateOccurrenceStatus(
                 try {
                   const url = await getCachedFileUrlFromSpaces(
                     att.key,
-                    req.user.orgId
+                    req.user.orgId,
                   );
                   const resp = await axios.get(url, {
                     responseType: "arraybuffer",
@@ -2403,20 +2403,20 @@ export async function updateOccurrenceStatus(
                     `[updateOccurrenceStatus] failed to download att ${
                       att.id || att.key
                     }:`,
-                    (dlErr as any)?.message ?? dlErr
+                    (dlErr as any)?.message ?? dlErr,
                   );
                   try {
                     // store fallback link for email body if needed
                     const url = await getCachedFileUrlFromSpaces(
                       att.key,
-                      req.user.orgId
+                      req.user.orgId,
                     );
                     fallbackUrls.push(url);
                   } catch (e) {
                     // ignore
                   }
                 }
-              })
+              }),
             );
 
             // if you want to include fallbackUrls in the notify body, pass them too or let notify helper add them
@@ -2425,7 +2425,7 @@ export async function updateOccurrenceStatus(
       } catch (e) {
         console.warn(
           "Failed to prepare attachments for notify:",
-          (e as any)?.message ?? e
+          (e as any)?.message ?? e,
         );
       }
       // ---------- end attachments ----------
@@ -2452,7 +2452,7 @@ export async function updateOccurrenceStatus(
           // new optional param: attachments for client email
           attachments: emailAttachmentsForNotify,
           // optionally pass fallbackUrls: fallbackUrls (if you collected them)
-        }
+        },
       );
 
       // console.log(
