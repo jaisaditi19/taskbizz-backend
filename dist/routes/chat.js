@@ -15,4 +15,5 @@ router.post("/conversations/read-all", chatController_1.markAllConversationsRead
 router.get("/conversations/:id/messages", chatController_1.listMessages);
 router.post("/conversations/:id/messages", chatController_1.sendMessage);
 router.post("/messages/:id/read", chatController_1.markMessageRead);
+router.delete("/messages/:id", chatController_1.deleteMessage);
 exports.default = router;

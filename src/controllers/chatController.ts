@@ -548,3 +548,77 @@ export const markAllConversationsRead = async (req: Request, res: Response) => {
     });
   }
 };
+
+// DELETE /chat/messages/:id
+export const deleteMessage = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const { id: userId } = (req.user as any) ?? {};
+    const prisma = await resolveOrgPrisma(req);
+
+    const messageId = req.params.id;
+
+    const message = await prisma.message.findUnique({
+      where: { id: messageId },
+      select: {
+        id: true,
+        conversationId: true,
+        senderId: true,
+      },
+    });
+
+    if (!message) {
+      return res.status(404).json({
+        error: "Message not found",
+      });
+    }
+
+    // User must be a member of the conversation
+    await ensureMember(
+      prisma,
+      message.conversationId,
+      userId
+    );
+
+    // Only the sender can delete their message
+    if (message.senderId !== userId) {
+      return res.status(403).json({
+        error: "You can only delete your own messages",
+      });
+    }
+
+    await prisma.message.delete({
+      where: {
+        id: messageId,
+      },
+    });
+
+    const io = ioRef || req.io;
+
+    if (io) {
+      io.to(`conv:${message.conversationId}`).emit(
+        "chat:message-deleted",
+        {
+          messageId,
+          conversationId: message.conversationId,
+          deletedBy: userId,
+        }
+      );
+    }
+
+    return res.json({
+      success: true,
+      messageId,
+      conversationId: message.conversationId,
+    });
+  } catch (error: any) {
+    console.error("deleteMessage error", error);
+
+    return res.status(error?.status || 500).json({
+      error:
+        error?.message || "Failed to delete message",
+    });
+  }
+};

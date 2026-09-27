@@ -9,6 +9,7 @@ import {
   markMessageRead,
   upsertDirectoryUser,
   markAllConversationsRead,
+  deleteMessage,
 } from "../controllers/chatController";
 
 const router = Router();
@@ -27,5 +28,6 @@ router.get("/conversations/:id/messages", listMessages);
 router.post("/conversations/:id/messages", sendMessage);
 
 router.post("/messages/:id/read", markMessageRead);
+router.delete("/messages/:id", deleteMessage);
 
 export default router;
