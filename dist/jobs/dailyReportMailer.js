@@ -203,6 +203,11 @@ async function sweepAllOrganizations() {
             NOT: {
                 dbName: "",
             },
+            subscriptions: {
+                some: {
+                    status: "ACTIVE",
+                },
+            },
         },
         select: {
             id: true,

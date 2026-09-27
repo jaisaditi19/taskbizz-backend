@@ -43,6 +43,7 @@ const documentRoutes_1 = __importDefault(require("./routes/documentRoutes"));
 require("./jobs/cleanup");
 require("./jobs/cronMailer");
 const dailyReportMailer_1 = require("./jobs/dailyReportMailer");
+const subscriptionExpiryCron_1 = require("./jobs/subscriptionExpiryCron");
 const subscription_1 = require("./middlewares/subscription");
 dotenv_1.default.config();
 const app = (0, express_1.default)();
@@ -140,6 +141,7 @@ const PORT = process.env.PORT || 8080;
 initPrismaAndFactories()
     .then(({ orgFactory }) => {
     (0, dailyReportMailer_1.startDailyReportMailer)();
+    (0, subscriptionExpiryCron_1.startSubscriptionExpiryCron)();
     server.listen(PORT, () => console.log(`Server running on port ${PORT} (pid=${process.pid})`));
     const shutdown = async () => {
         console.log("Shutting down server...");

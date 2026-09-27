@@ -41,6 +41,8 @@ import documentRoutes from "./routes/documentRoutes";
 import "./jobs/cleanup";
 import "./jobs/cronMailer";
 import { startDailyReportMailer } from "./jobs/dailyReportMailer";
+import { startSubscriptionExpiryCron } from "./jobs/subscriptionExpiryCron";
+
 import { attachSubscriptionContext } from "./middlewares/subscription";
 
 dotenv.config();
@@ -179,6 +181,9 @@ const PORT = process.env.PORT || 8080;
 initPrismaAndFactories()
   .then(({ orgFactory }) => {
     startDailyReportMailer();
+    
+    startSubscriptionExpiryCron();
+    
     server.listen(PORT, () =>
       console.log(`Server running on port ${PORT} (pid=${process.pid})`)
     );
