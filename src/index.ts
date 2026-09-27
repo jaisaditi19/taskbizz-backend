@@ -40,6 +40,7 @@ import documentRoutes from "./routes/documentRoutes";
 // Jobs / other middlewares
 import "./jobs/cleanup";
 import "./jobs/cronMailer";
+import { startDailyReportMailer } from "./jobs/dailyReportMailer";
 import { attachSubscriptionContext } from "./middlewares/subscription";
 
 dotenv.config();
@@ -177,6 +178,7 @@ const PORT = process.env.PORT || 8080;
 
 initPrismaAndFactories()
   .then(({ orgFactory }) => {
+    startDailyReportMailer();
     server.listen(PORT, () =>
       console.log(`Server running on port ${PORT} (pid=${process.pid})`)
     );
