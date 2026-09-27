@@ -11,6 +11,7 @@ router.post("/directory/user-upsert", chatController_1.upsertDirectoryUser);
 router.use(auth_1.authenticate);
 router.get("/conversations", chatController_1.listConversations);
 router.post("/conversations", chatController_1.createConversation);
+router.post("/conversations/read-all", chatController_1.markAllConversationsRead);
 router.get("/conversations/:id/messages", chatController_1.listMessages);
 router.post("/conversations/:id/messages", chatController_1.sendMessage);
 router.post("/messages/:id/read", chatController_1.markMessageRead);

@@ -26,7 +26,9 @@ export function attachChatIO(io: Server) {
 
 // Helpers
 function assertBodyHasOneOf(body?: string, attachments?: any[]): boolean {
-  return !!(body && body.trim().length) || !!(attachments && attachments.length);
+  return (
+    !!(body && body.trim().length) || !!(attachments && attachments.length)
+  );
 }
 
 // ────────────────────────────────────────────────────────────────────────────────
@@ -85,7 +87,6 @@ export const listConversations = async (req: Request, res: Response) => {
   }
 };
 
-
 // import { corePrisma } from "../prisma/coreClient"; // <-- import your core DB client
 
 export const createConversation = async (req: Request, res: Response) => {
@@ -105,37 +106,36 @@ export const createConversation = async (req: Request, res: Response) => {
     // ✅ Prevent duplicate 1-to-1 chats
     if (!isGroup && distinctMemberIds.length === 2) {
       const existing = await orgPrisma.conversation.findFirst({
-  where: {
-    isGroup: false,
-    AND: [
-      {
-        members: {
-          some: { userId: distinctMemberIds[0] },
+        where: {
+          isGroup: false,
+          AND: [
+            {
+              members: {
+                some: { userId: distinctMemberIds[0] },
+              },
+            },
+            {
+              members: {
+                some: { userId: distinctMemberIds[1] },
+              },
+            },
+          ],
         },
-      },
-      {
-        members: {
-          some: { userId: distinctMemberIds[1] },
+        include: {
+          members: true,
+          messages: {
+            take: 1,
+            orderBy: { createdAt: "desc" },
+          },
         },
-      },
-    ],
-  },
-  include: {
-    members: true,
-    messages: {
-      take: 1,
-      orderBy: { createdAt: "desc" },
-    },
-  },
       });
-      
+
       if (existing && existing.members.length === 2) {
         return res.status(200).json({
           conversation: existing,
           existing: true,
         });
       }
-
 
       if (existing) {
         return res.status(200).json({ conversation: existing, existing: true });
@@ -170,7 +170,7 @@ export const createConversation = async (req: Request, res: Response) => {
             updatedAt: new Date(),
           },
         });
-      })
+      }),
     );
 
     // ✅ Create conversation
@@ -221,23 +221,22 @@ export const createConversation = async (req: Request, res: Response) => {
       }
     }
 
-    res.status(201).json({ conversation , existing: false});
+    res.status(201).json({ conversation, existing: false });
   } catch (error) {
     console.error("createConversation error", error);
     res.status(500).json({ error: "Failed to create conversation" });
   }
 };
 
-
-
-
-
-
 // ────────────────────────────────────────────────────────────────────────────────
 // Messages
 // ────────────────────────────────────────────────────────────────────────────────
 
-async function ensureMember(prisma: any, conversationId: string, userId: string) {
+async function ensureMember(
+  prisma: any,
+  conversationId: string,
+  userId: string,
+) {
   const m = await prisma.conversationMember.findFirst({
     where: { conversationId, userId },
     select: { id: true },
@@ -378,9 +377,6 @@ export const sendMessage = async (req: Request, res: Response) => {
   }
 };
 
-
-
-
 // POST /chat/messages/:id/read
 export const markMessageRead = async (req: Request, res: Response) => {
   try {
@@ -429,17 +425,126 @@ export const upsertDirectoryUser = async (req: Request, res: Response) => {
     // Secure this route (internal secret/mTLS). orgId can be passed explicitly or derived.
     const { orgId, userId, name, avatarUrl } = req.body || {};
     if (!orgId || !userId || !name) {
-      return res.status(400).json({ error: "orgId, userId, name are required" });
+      return res
+        .status(400)
+        .json({ error: "orgId, userId, name are required" });
     }
     const prisma = await resolveOrgPrisma(req);
     const user = await prisma.directoryUser.upsert({
       where: { userId: String(userId) },
-      create: { userId: String(userId), name: String(name), avatarUrl: avatarUrl ? String(avatarUrl) : null },
-      update: { name: String(name), avatarUrl: avatarUrl ? String(avatarUrl) : null, updatedAt: new Date() },
+      create: {
+        userId: String(userId),
+        name: String(name),
+        avatarUrl: avatarUrl ? String(avatarUrl) : null,
+      },
+      update: {
+        name: String(name),
+        avatarUrl: avatarUrl ? String(avatarUrl) : null,
+        updatedAt: new Date(),
+      },
     });
     res.json({ user });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to upsert directory user" });
+  }
+};
+
+// Mark all conversations as read for the current user
+export const markAllConversationsRead = async (req: Request, res: Response) => {
+  try {
+    const { id: userId } = (req.user as any) ?? {};
+    const prisma = await resolveOrgPrisma(req);
+
+    const memberships = await prisma.conversationMember.findMany({
+      where: { userId },
+      select: { conversationId: true },
+    });
+
+    const conversationIds: string[] = [];
+
+    for (const membership of memberships) {
+      conversationIds.push(membership.conversationId);
+    }
+
+    if (conversationIds.length === 0) {
+      return res.json({
+        success: true,
+        markedCount: 0,
+      });
+    }
+
+    const unreadMessages = await prisma.message.findMany({
+      where: {
+        conversationId: {
+          in: conversationIds,
+        },
+        senderId: {
+          not: userId,
+        },
+        reads: {
+          none: {
+            userId,
+          },
+        },
+      },
+      select: {
+        id: true,
+        conversationId: true,
+      },
+    });
+
+    if (unreadMessages.length === 0) {
+      return res.json({
+        success: true,
+        markedCount: 0,
+      });
+    }
+
+    await prisma.messageRead.createMany({
+      data: unreadMessages.map(
+        (message: { id: string; conversationId: string }) => ({
+          messageId: message.id,
+          userId,
+        }),
+      ),
+      skipDuplicates: true,
+    });
+
+    const io = ioRef || req.io;
+
+    if (io) {
+      const messageIdsByConversation = new Map<string, string[]>();
+
+      for (const message of unreadMessages) {
+        const ids = messageIdsByConversation.get(message.conversationId) ?? [];
+
+        ids.push(message.id);
+
+        messageIdsByConversation.set(message.conversationId, ids);
+      }
+
+      for (const [
+        conversationId,
+        messageIds,
+      ] of messageIdsByConversation.entries()) {
+        io.to(`conv:${conversationId}`).emit("chat:reads", {
+          conversationId,
+          userId,
+          messageIds,
+        });
+      }
+    }
+
+    return res.json({
+      success: true,
+      markedCount: unreadMessages.length,
+    });
+  } catch (error: any) {
+    console.error("markAllConversationsRead error", error);
+
+    return res.status(error?.status || 500).json({
+      error: error?.message || "Failed to mark all conversations as read",
+    });
   }
 };

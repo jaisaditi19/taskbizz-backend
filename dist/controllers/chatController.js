@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.upsertDirectoryUser = exports.markMessageRead = exports.sendMessage = exports.listMessages = exports.createConversation = exports.listConversations = void 0;
+exports.markAllConversationsRead = exports.upsertDirectoryUser = exports.markMessageRead = exports.sendMessage = exports.listMessages = exports.createConversation = exports.listConversations = void 0;
 exports.attachChatIO = attachChatIO;
 const coreClient_1 = require("../prisma/coreClient");
 const container_1 = require("../di/container");
@@ -25,7 +25,7 @@ function attachChatIO(io) {
 }
 // Helpers
 function assertBodyHasOneOf(body, attachments) {
-    return !!(body && body.trim().length) || !!(attachments && attachments.length);
+    return (!!(body && body.trim().length) || !!(attachments && attachments.length));
 }
 // ────────────────────────────────────────────────────────────────────────────────
 // Conversations
@@ -374,13 +374,23 @@ const upsertDirectoryUser = async (req, res) => {
         // Secure this route (internal secret/mTLS). orgId can be passed explicitly or derived.
         const { orgId, userId, name, avatarUrl } = req.body || {};
         if (!orgId || !userId || !name) {
-            return res.status(400).json({ error: "orgId, userId, name are required" });
+            return res
+                .status(400)
+                .json({ error: "orgId, userId, name are required" });
         }
         const prisma = await resolveOrgPrisma(req);
         const user = await prisma.directoryUser.upsert({
             where: { userId: String(userId) },
-            create: { userId: String(userId), name: String(name), avatarUrl: avatarUrl ? String(avatarUrl) : null },
-            update: { name: String(name), avatarUrl: avatarUrl ? String(avatarUrl) : null, updatedAt: new Date() },
+            create: {
+                userId: String(userId),
+                name: String(name),
+                avatarUrl: avatarUrl ? String(avatarUrl) : null,
+            },
+            update: {
+                name: String(name),
+                avatarUrl: avatarUrl ? String(avatarUrl) : null,
+                updatedAt: new Date(),
+            },
         });
         res.json({ user });
     }
@@ -390,3 +400,83 @@ const upsertDirectoryUser = async (req, res) => {
     }
 };
 exports.upsertDirectoryUser = upsertDirectoryUser;
+// Mark all conversations as read for the current user
+const markAllConversationsRead = async (req, res) => {
+    try {
+        const { id: userId } = req.user ?? {};
+        const prisma = await resolveOrgPrisma(req);
+        const memberships = await prisma.conversationMember.findMany({
+            where: { userId },
+            select: { conversationId: true },
+        });
+        const conversationIds = [];
+        for (const membership of memberships) {
+            conversationIds.push(membership.conversationId);
+        }
+        if (conversationIds.length === 0) {
+            return res.json({
+                success: true,
+                markedCount: 0,
+            });
+        }
+        const unreadMessages = await prisma.message.findMany({
+            where: {
+                conversationId: {
+                    in: conversationIds,
+                },
+                senderId: {
+                    not: userId,
+                },
+                reads: {
+                    none: {
+                        userId,
+                    },
+                },
+            },
+            select: {
+                id: true,
+                conversationId: true,
+            },
+        });
+        if (unreadMessages.length === 0) {
+            return res.json({
+                success: true,
+                markedCount: 0,
+            });
+        }
+        await prisma.messageRead.createMany({
+            data: unreadMessages.map((message) => ({
+                messageId: message.id,
+                userId,
+            })),
+            skipDuplicates: true,
+        });
+        const io = ioRef || req.io;
+        if (io) {
+            const messageIdsByConversation = new Map();
+            for (const message of unreadMessages) {
+                const ids = messageIdsByConversation.get(message.conversationId) ?? [];
+                ids.push(message.id);
+                messageIdsByConversation.set(message.conversationId, ids);
+            }
+            for (const [conversationId, messageIds,] of messageIdsByConversation.entries()) {
+                io.to(`conv:${conversationId}`).emit("chat:reads", {
+                    conversationId,
+                    userId,
+                    messageIds,
+                });
+            }
+        }
+        return res.json({
+            success: true,
+            markedCount: unreadMessages.length,
+        });
+    }
+    catch (error) {
+        console.error("markAllConversationsRead error", error);
+        return res.status(error?.status || 500).json({
+            error: error?.message || "Failed to mark all conversations as read",
+        });
+    }
+};
+exports.markAllConversationsRead = markAllConversationsRead;

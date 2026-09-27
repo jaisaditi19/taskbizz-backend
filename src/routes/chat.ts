@@ -8,6 +8,7 @@ import {
   sendMessage,
   markMessageRead,
   upsertDirectoryUser,
+  markAllConversationsRead,
 } from "../controllers/chatController";
 
 const router = Router();
@@ -20,6 +21,7 @@ router.use(authenticate);
 
 router.get("/conversations", listConversations);
 router.post("/conversations", createConversation);
+router.post("/conversations/read-all", markAllConversationsRead);
 
 router.get("/conversations/:id/messages", listMessages);
 router.post("/conversations/:id/messages", sendMessage);
