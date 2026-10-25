@@ -42,7 +42,7 @@ import "./jobs/cleanup";
 import "./jobs/cronMailer";
 import { startDailyReportMailer } from "./jobs/dailyReportMailer";
 import { startSubscriptionExpiryCron } from "./jobs/subscriptionExpiryCron";
-import { startLicenseMailer } from "./jobs/licenseMailer";
+// import { startLicenseMailer } from "./jobs/licenseMailer";
 
 import { attachSubscriptionContext } from "./middlewares/subscription";
 
@@ -184,7 +184,7 @@ initPrismaAndFactories()
     startDailyReportMailer();
     
     startSubscriptionExpiryCron();
-    startLicenseMailer();
+    // startLicenseMailer();
     
     server.listen(PORT, () =>
       console.log(`Server running on port ${PORT} (pid=${process.pid})`)
