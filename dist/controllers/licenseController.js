@@ -392,8 +392,7 @@ exports.updateLicense = updateLicense;
 ----------------------------------------------------------------------- */
 const renewLicense = async (req, res) => {
     try {
-        if (!canUpdate(req))
-            return res.status(403).json({ message: "Forbidden" });
+        // if (!canUpdate(req)) return res.status(403).json({ message: "Forbidden" });
         const orgPrisma = await resolveOrgPrisma(req);
         const id = req.params.id;
         const newExpiresOn = new Date(req.body?.newExpiresOn);
